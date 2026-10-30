@@ -11,7 +11,7 @@ import uuid
 
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
-from src.shared.ai_config import get_model, codex_settings
+from src.shared.ai_config import get_model, get_reasoning_effort, codex_settings
 from src.shared.openrouter_client import redact
 
 BILLING = 'codex_subscription'
@@ -47,8 +47,9 @@ def executable():
 class CodexClient:
     billing_source = BILLING
 
-    def __init__(self, *, vision=False):
-        self.model = get_model()
+    def __init__(self, *, model=None, effort=None, vision=False):
+        self.model = model or get_model()
+        self.effort = effort if effort is not None else get_reasoning_effort()
         self.vision = vision
 
     def preflight(self, *, search=True):
@@ -117,7 +118,7 @@ class CodexClient:
                  '--cd',str(directory),'--json','--color','never','--output-schema',str(directory/'schema.json'),
                  '--output-last-message',str(directory/'final.json')]
         if self.model!='codex/default':command+=['--model',self.model]
-        effort=codex_settings().get('reasoning_effort')
+        effort = self.effort if self.effort is not None else codex_settings().get('reasoning_effort')
         if effort:command+=['-c','model_reasoning_effort='+json.dumps(effort)]
         for image in images:command+=['--image',str(image)]
         command+=['-']

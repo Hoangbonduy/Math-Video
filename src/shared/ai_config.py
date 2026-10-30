@@ -46,10 +46,62 @@ def codex_settings():
     return value
 
 
-def get_model():
+def get_model(stage=None):
     if get_backend() == 'codex':
-        return os.environ.get('CODEX_MODEL', '').strip() or codex_settings().get('model') or 'codex/default'
+        stages = codex_settings().get('stages', {})
+        if stage and stages.get(stage, {}).get('model'):
+            return stages[stage]['model']
+        env_model = os.environ.get('CODEX_MODEL', '').strip()
+        if env_model:
+            return env_model
+        top_model = codex_settings().get('model')
+        if top_model:
+            return top_model
+        if stage in ('scene_design', 'scene_clip', 'scene_generation', 'scene_revision'):
+            if stages.get('scene_design', {}).get('model'):
+                return stages['scene_design']['model']
+            if stages.get('idea', {}).get('model'):
+                return stages['idea']['model']
+        if stages.get('idea', {}).get('model'):
+            return stages['idea']['model']
+        for s in stages.values():
+            if isinstance(s, dict) and s.get('model'):
+                return s['model']
+        return 'codex/default'
     return os.environ.get('OPENROUTER_MODEL', '').strip() or MODEL
+
+
+def get_allowed_models():
+    models = set()
+    top_model = codex_settings().get('model')
+    if top_model:
+        models.add(top_model)
+    if get_backend() == 'codex':
+        for stage_cfg in codex_settings().get('stages', {}).values():
+            if isinstance(stage_cfg, dict) and stage_cfg.get('model'):
+                models.add(stage_cfg['model'])
+    models.add(get_model())
+    return models
+
+
+def get_reasoning_effort(stage=None):
+    stages = codex_settings().get('stages', {})
+    if stage and stages.get(stage, {}).get('reasoning_effort'):
+        return stages[stage]['reasoning_effort']
+    top_effort = codex_settings().get('reasoning_effort')
+    if top_effort:
+        return top_effort
+    if stage in ('scene_design', 'scene_clip', 'scene_generation', 'scene_revision'):
+        if stages.get('scene_design', {}).get('reasoning_effort'):
+            return stages['scene_design']['reasoning_effort']
+        if stages.get('idea', {}).get('reasoning_effort'):
+            return stages['idea']['reasoning_effort']
+    if stages.get('idea', {}).get('reasoning_effort'):
+        return stages['idea']['reasoning_effort']
+    for s in stages.values():
+        if isinstance(s, dict) and s.get('reasoning_effort'):
+            return s['reasoning_effort']
+    return None
 
 
 def normalize_brief(value=None):

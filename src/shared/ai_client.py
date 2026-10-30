@@ -2,10 +2,13 @@
 from src.shared.ai_config import get_backend
 
 
-def create_text_client():
+def create_text_client(*, stage=None, model=None, effort=None):
     if get_backend() == 'codex':
+        from src.shared.ai_config import get_model, get_reasoning_effort
         from src.shared.codex_client import CodexClient
-        return CodexClient()
+        effective_model = model or (get_model(stage) if stage else None)
+        effective_effort = effort or (get_reasoning_effort(stage) if stage else None)
+        return CodexClient(model=effective_model, effort=effective_effort)
     from src.shared.openrouter_client import OpenRouterClient
     return OpenRouterClient()
 

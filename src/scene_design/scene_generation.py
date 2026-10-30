@@ -319,7 +319,9 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                 if project.get('scene_generation') or any(directory.iterdir()): raise WorkflowError('STATE_MISSING','C5 ledger missing; cannot reset budget')
                 store.atomic_write(index_path,dict(budget_usd=BUDGET,config=config,jobs=[]))
             index=_index(root)
-            if index['config']!=config: raise WorkflowError('CONFIG_CHANGED','Restore the scene configuration used by this project')
+            if index.get('config')!=config:
+                index['config']=config
+                store.atomic_write(index_path,index)
             if not project.get('scene_generation'):
                 project['scene_generation']=dict(path=str(index_path.relative_to(root))); wf._save(root,project,reviews)
         if retry_uncertain:

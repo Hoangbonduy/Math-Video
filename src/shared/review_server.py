@@ -137,7 +137,10 @@ class Handler(BaseHTTPRequestHandler):
             state['music']=music_state(self.server.root)
             with self.server.jobs_lock: tasks=dict(self.server.jobs)
             from src.shared.ai_config import get_model
-            self.send_json(200,dict(project=state,token=self.server.token,tasks=tasks,api_version=API_VERSION,codex_auth=self.server.codex_auth.snapshot(),ai_provider=dict(backend=state['ai_backend'],model=get_model()),capabilities=['script_history','new_generation','manim_design','continuous_preview','scene_design_v2','codex_auth','ai_provider'])); return
+            idea_m = get_model('idea')
+            script_m = get_model('script')
+            display_model = f"{idea_m} (ý tưởng) / {script_m} (kịch bản)" if idea_m != script_m else get_model()
+            self.send_json(200,dict(project=state,token=self.server.token,tasks=tasks,api_version=API_VERSION,codex_auth=self.server.codex_auth.snapshot(),ai_provider=dict(backend=state['ai_backend'],model=display_model),capabilities=['script_history','new_generation','manim_design','continuous_preview','scene_design_v2','codex_auth','ai_provider'])); return
         if url.path=='/api/diagnostics':
             from datetime import datetime,timezone
             from src.scene_design.scene_drafts import current as current_drafts

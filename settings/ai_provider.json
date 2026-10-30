@@ -1,8 +1,16 @@
 {
   "backend": "codex",
   "codex": {
-    "model": "gpt-6.1-terra",
-    "reasoning_effort": "high",
-    "timeout_seconds": 600
+    "timeout_seconds": 600,
+    "stages": {
+      "idea": {
+        "model": "gpt-6.1-terra",
+        "reasoning_effort": "high"
+      },
+      "script": {
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high"
+      }
+    }
   }
 }

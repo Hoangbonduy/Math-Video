@@ -10,7 +10,7 @@ import socket
 import urllib.error
 import urllib.request
 
-from src.shared.ai_config import get_model, MAX_OUTPUT_TOKENS, TIMEOUT_SECONDS, SEARCH_RESERVE_USD
+from src.shared.ai_config import get_model, get_backend, MODEL, MAX_OUTPUT_TOKENS, TIMEOUT_SECONDS, SEARCH_RESERVE_USD
 from src.shared._workflow_store import WorkflowError
 
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -92,7 +92,7 @@ def _price(value):
 class OpenRouterClient:
     def __init__(self, *, transport=None):
         self._key = os.environ.get("OPENROUTER_API_KEY")
-        self.model = get_model()
+        self.model = os.environ.get("OPENROUTER_MODEL", "").strip() or MODEL
         self.transport = transport or http_json
 
     def _send(self, method, path, payload=None):
@@ -204,9 +204,20 @@ class OpenRouterClient:
         return self._send("POST", "/chat/completions", payload)
 
 
-def response_text(response):
-    if response.get("model") != get_model():
-        raise WorkflowError("MODEL_MISMATCH", "Response did not come from the configured model")
+def response_text(response, model=None):
+    if model is not None:
+        if response.get("model") != model:
+            raise WorkflowError("MODEL_MISMATCH", "Response did not come from the configured model")
+    elif os.environ.get("OPENROUTER_MODEL", "").strip():
+        if response.get("model") != os.environ.get("OPENROUTER_MODEL", "").strip():
+            raise WorkflowError("MODEL_MISMATCH", "Response did not come from the configured model")
+    elif get_backend() == "openrouter":
+        if response.get("model") != MODEL:
+            raise WorkflowError("MODEL_MISMATCH", "Response did not come from the configured model")
+    else:
+        from src.shared.ai_config import get_allowed_models
+        if response.get("model") not in get_allowed_models():
+            raise WorkflowError("MODEL_MISMATCH", "Response did not come from the configured model")
     try:
         choice = response["choices"][0]
         if choice.get("finish_reason") not in ("stop", None):
