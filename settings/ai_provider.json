@@ -1,0 +1,8 @@
+{
+  "backend": "codex",
+  "codex": {
+    "model": "gpt-6.1-terra",
+    "reasoning_effort": "medium",
+    "timeout_seconds": 600
+  }
+}

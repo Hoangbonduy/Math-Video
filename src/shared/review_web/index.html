@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7f8">
+  <title>Xưởng video toán</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Đến nội dung chính</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#idea"><span class="brand-mark" aria-hidden="true">∑</span><span>Xưởng video toán</span></a>
+      <div class="topbar-right"><span class="connection" id="connection">Đang kết nối…</span><span class="avatar" aria-label="Không gian cá nhân">H</span></div>
+    </header>
+    <div class="app-body">
+      <aside class="sidebar">
+        <p class="eyebrow">Dự án của bạn</p>
+        <nav class="steps" aria-label="Các bước làm video">
+          <a href="#idea" data-page="idea"><span>01</span>Ý tưởng</a>
+          <a href="#design" data-page="design"><span>02</span>Thiết kế cảnh</a>
+          <a href="#preview" data-page="preview"><span>03</span>Xem bản dựng</a>
+          <a href="#history" data-page="history"><span>↺</span>Lịch sử kịch bản</a>
+        </nav>
+        <div class="project-info"><p id="project">Đang đọc dự án…</p><p id="format"></p><span id="project-status" class="badge"></span></div>
+        <div class="budget-card"><span class="eyebrow">Hạn mức sử dụng</span><p id="budget">—</p><progress id="budget-progress" max="1" value="0" aria-label="Ngân sách đã dùng"></progress><small id="budget-stage">Tạo kịch bản</small></div>
+        <section id="ai-provider" class="codex-account" aria-label="Nguồn AI" hidden></section>
+        <section id="codex-account" class="codex-account" aria-label="Tài khoản Codex" aria-live="polite" hidden></section>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div id="notice" role="status" aria-live="polite"></div>
+        <div class="page-heading"><div><p id="breadcrumb" class="eyebrow"></p><h1 id="page-title">Biến ý tưởng thành hình ảnh</h1></div><div id="page-actions" class="actions"></div></div>
+        <section id="script-history-page" hidden aria-label="Lịch sử kịch bản"></section>
+        <section id="idea-page" hidden aria-label="Ý tưởng video"></section>
+        <div id="manim-status" class="manim-status" hidden role="status"></div>
+        <div id="scene-page" class="scene-workspace">
+          <aside class="scene-rail"><div class="rail-heading"><h2>Các cảnh</h2><span id="scene-count"></span></div><nav id="scenes" aria-label="Danh sách cảnh"></nav></aside>
+          <div class="scene-content">
+            <section id="continuous-preview" class="card continuous-preview" aria-label="Bản dựng liền mạch" hidden></section>
+            <div id="controls" class="version-bar"></div>
+            <section id="scene-progress" class="scene-progress" role="status" aria-live="polite" hidden></section>
+            <div id="review-layout" class="review-layout">
+              <div class="viewer-column"><section id="viewer" class="viewer-card" aria-label="Nội dung cảnh"></section><nav id="scene-strip" class="scene-strip" aria-label="Chọn cảnh xem trước" hidden></nav><section id="editor" class="card editor-card"></section></div>
+              <aside id="feedback" class="card feedback-card" aria-label="Ghi chú duyệt"></aside>
+            </div>
+            <section id="revisions" aria-label="Các vòng sửa và lịch sử"></section>
+          </div>
+        </div>
+        <section id="voice-panel"></section>
+        <section id="final-review"></section>
+        <footer class="workspace-footer"><span id="footer-status">Nội dung được lưu theo từng phiên bản.</span><span id="page-number">02 / 03</span></footer>
+      </main>
+    </div>
+  </div>
+  <script src="/idea/web.js" defer></script>
+  <script src="/scene_design/web.js" defer></script>
+  <script src="/preview/web.js" defer></script>
+  <script src="/script_history/web.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>

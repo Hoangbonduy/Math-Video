@@ -1,0 +1,5 @@
+{
+  "scene_id": "scene_01",
+  "description": "Một điểm trắng chuyển động từ trái sang phải trên nền đen",
+  "fixture": "moving_dot.py"
+}

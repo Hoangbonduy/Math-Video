@@ -1,0 +1,2 @@
+manim
+edge-tts==7.3.1

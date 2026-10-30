@@ -1,0 +1,5 @@
+{
+  "scene_id": "scene_02",
+  "description": "Một hình chữ nhật xanh tăng chiều rộng trên nền đen",
+  "fixture": "resizing_rectangle.py"
+}

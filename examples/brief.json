@@ -1,0 +1,8 @@
+{
+  "language": "vi",
+  "audience": "Người xem phổ thông, không có kiến thức chuyên môn",
+  "min_seconds": 30,
+  "max_seconds": 60,
+  "read_units_per_second": 3.5,
+  "requirements": "Một ý chính, một ví dụ trực quan, lời dẫn tự nhiên và liền mạch"
+}

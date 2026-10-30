@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.venv/
+
+# Project-local, verified provider CLI binaries
+.tools/
+
+# User data and assets
+data/
+docs/
+media/
+music/
+output/
+
