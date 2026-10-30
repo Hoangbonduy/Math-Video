@@ -2,7 +2,7 @@
   "backend": "codex",
   "codex": {
     "model": "gpt-6.1-terra",
-    "reasoning_effort": "medium",
+    "reasoning_effort": "high",
     "timeout_seconds": 600
   }
 }

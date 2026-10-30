@@ -1,5 +1,5 @@
 """Microsoft Edge online Vietnamese speech, no user API key or FPT fallback."""
-import asyncio,hashlib,math,uuid
+import asyncio,hashlib,math,time,uuid
 from pathlib import Path
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
@@ -37,7 +37,9 @@ async def _with_retries(text,voice,rate,path,call):
             if isinstance(exc,WorkflowError):raise
             code,message,retry=_failure(exc)
             call.update(error=type(exc).__name__,error_code=code)
-            call.setdefault('attempt_diagnostics',[]).append(dict(attempt=attempt+1,boundary=boundary,error=type(exc).__name__,code=code))
+            diag=dict(attempt=attempt+1,boundary=boundary,error=type(exc).__name__,code=code)
+            if hasattr(exc,'status'):diag['status']=exc.status
+            call.setdefault('attempt_diagnostics',[]).append(diag)
             if not retry or attempt==2:raise WorkflowError(code,message) from None
             # Nam Minh can return no audio for one metadata mode but work in
             # the other with the same text/voice. Never change the user's voice.
@@ -54,7 +56,9 @@ async def _with_retries(text,voice,rate,path,call):
 def synthesize(root,text,config,retry_uncertain=None):
     from src.preview.audio import init_ledger
     root=Path(root)
-    if not isinstance(text,str) or not 3<=len(text)<=5000:raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
+    if not isinstance(text,str):raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
+    text=' '.join(text.split())
+    if not 3<=len(text)<=5000:raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
     key=hashlib.sha256(_json_bytes(dict(provider='edge',voice=config['voice'],speed=config['speed'],text=text,format='wav'))).hexdigest()
     ledger=init_ledger(root);directory=root/'generation/checkpoint_7';path=directory/(key+'.wav');meta=directory/(key+'.json');ledger_path=directory/'ledger.json'
     if meta.exists():
@@ -65,7 +69,10 @@ def synthesize(root,text,config,retry_uncertain=None):
     previous=next((c for c in reversed(ledger['calls']) if c['key']==key),None)
     if previous and previous['status'] in ('in_flight','uncertain') and retry_uncertain!=previous['id']:
         raise WorkflowError('TTS_RESULT_UNKNOWN','Lượt giọng Microsoft chưa rõ kết quả. Chọn tiếp tục lượt đó trước khi gửi lại.')
-    call=dict(id=uuid.uuid4().hex,key=key,provider='edge',status='in_flight',characters=len(text),text=text,voice=config['voice'],speed=config['speed'],reserved_usd=None,cost_status='no_api_key',price=None,exchange_rate=None)
+    recent=max((c.get('completed_epoch') or c.get('started_epoch',0) for c in ledger.get('calls',[]) if c.get('provider')=='edge'),default=0)
+    wait=max(0.0,recent+1.2-time.time())
+    if 0<wait<=2.0:time.sleep(wait)
+    call=dict(id=uuid.uuid4().hex,key=key,provider='edge',status='in_flight',started_epoch=time.time(),characters=len(text),text=text,voice=config['voice'],speed=config['speed'],reserved_usd=None,cost_status='no_api_key',price=None,exchange_rate=None)
     ledger['calls'].append(call);store.atomic_write(ledger_path,ledger)
     mp3=directory/(key+'.download.mp3');temporary=directory/(key+'.partial.wav')
     try:
@@ -75,11 +82,11 @@ def synthesize(root,text,config,retry_uncertain=None):
         if not math.isfinite(seconds) or seconds<=0:raise WorkflowError('TTS_AUDIO','Microsoft chưa trả âm thanh hợp lệ.')
         temporary.replace(path)
         result=dict(status='complete',provider='edge',voice=config['voice'],boundary=call['boundary'],path=str(path.relative_to(root)),sha256=store.digest(path),duration=seconds,text=text,key=key)
-        store.atomic_write(meta,result);call['status']='complete';call.pop('error',None);call.pop('error_code',None);store.atomic_write(ledger_path,ledger)
+        store.atomic_write(meta,result);call['status']='complete';call['completed_epoch']=time.time();call.pop('error',None);call.pop('error_code',None);store.atomic_write(ledger_path,ledger)
         return result
     except Exception as exc:
         code,message,_=_failure(exc)
-        call.update(status='failed',error=call.get('error',type(exc).__name__),error_code=code);store.atomic_write(ledger_path,ledger)
+        call.update(status='failed',completed_epoch=time.time(),error=call.get('error',type(exc).__name__),error_code=code);store.atomic_write(ledger_path,ledger)
         if isinstance(exc,WorkflowError):raise
         raise WorkflowError(code,message) from None
     finally:
