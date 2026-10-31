@@ -12,7 +12,7 @@ from unittest.mock import patch
 from src.preview import continuous_preview as preview
 from src.shared import workflow as wf
 from src.shared import _workflow_store as store
-from src.preview import audio
+from src.preview import audio, pacing
 from src.shared.media_tools import binary, run, probe
 from src.shared.review import record_review
 from src.shared.review_server import ReviewServer
@@ -76,6 +76,12 @@ class PreviewTests(unittest.TestCase):
         with patch('src.preview.continuous_preview.SYNTHESIZER',side_effect=fake_speech) as synth:
             item=preview.generate(self.root,True);count=synth.call_count
             preview.generate(self.root,True);self.assertEqual(synth.call_count,count)
+        silent=preview.generate(self.root)
+        self.assertGreater(item['duration'],silent['duration'])
+        self.assertTrue(all(s['hold_seconds']>0 for s in item['scenes']))
+        self.assertTrue(all(abs(c['end']-c['start']-.6)<1e-6 for c in item['cues']))
+        for scene in item['scenes']:
+            self.assertTrue(all(scene['start']<=c['start']<c['end']<=scene['end'] for c in item['cues'] if c['scene_id']==scene['scene_id']))
         info=probe(self.root/item['path']);sound=next(s for s in info['streams'] if s['codec_type']=='audio');video=next(s for s in info['streams'] if s['codec_type']=='video')
         self.assertLess(abs(float(sound['duration'])-float(video['duration'])),.034)
         self.assertEqual(len(item['cues']),count)
@@ -87,6 +93,81 @@ class PreviewTests(unittest.TestCase):
         with store.locked_project(self.root):
             p,r=wf._load(self.root);a=wf._latest(p,'scene_design','first');a['sha256']='f'*64;wf._save(self.root,p,r)
         with self.assertRaisesRegex(store.WorkflowError,'ARTIFACT_CHANGED'):preview.generate(self.root)
+
+    def test_speech_stays_unchanged_across_picture_waits(self):
+        import numpy as np
+        segments=[]
+        originals=[]
+        for index,frequency in enumerate((440,880)):
+            path=self.root/f'tone{index}.wav'
+            run([binary('ffmpeg'),'-y','-v','error','-f','lavfi','-i',
+                 f'sine=frequency={frequency}:duration=1','-ar','48000',str(path)])
+            with wave.open(str(path),'rb') as wav:originals.append(wav.readframes(wav.getnframes()))
+            segments.append(dict(text=str(index),start=.15+index*1.3,end=1.15+index*1.3,
+                                 audio=dict(path=path.name,duration=1)))
+        output=self.root/'natural.wav'
+        pacing.speech_track(self.root,segments,output,2.8)
+        with wave.open(str(output),'rb') as wav:
+            self.assertEqual(wav.getnframes(),134400)
+            samples=np.frombuffer(wav.readframes(wav.getnframes()),dtype='<i2')
+        for original,segment in zip(originals,segments):
+            start=round(segment['start']*48000)
+            self.assertEqual(samples[start:start+48000].tobytes(),original)
+        self.assertFalse(samples[55200:69600].any())  # Silence while waiting for picture.
+
+    def test_short_speech_waits_for_picture_without_speed_change(self):
+        ref=fake_speech(self.root,'Short speech',{})
+        segments=[dict(text='Short speech',audio=ref)]
+        beats=pacing.plan(self.root,{},['Short speech'],segments,2,30)
+        self.assertEqual(beats[-1]['end_frame'],60)
+        self.assertEqual(beats[0]['hold_frames'],0)
+        self.assertAlmostEqual(segments[0]['start'],.15)
+        self.assertAlmostEqual(segments[0]['end'],.75)
+
+    def test_12fps_motion_preserved_with_internal_and_final_holds(self):
+        import av
+        import numpy as np
+        source=self.root/'motion.mp4'
+        run([binary('ffmpeg'),'-y','-v','error','-f','lavfi','-i',
+             'testsrc2=s=320x180:r=12','-t','1','-c:v','libx264','-pix_fmt','yuv420p',str(source)])
+        story=self.root/'storyboard.json'
+        store.atomic_write(story,dict(beats=[
+            dict(id='one',start=0,end=.5,narration_excerpt='First.'),
+            dict(id='two',start=.5,end=.95,narration_excerpt='Second.')]))
+        segments=[dict(text=text,audio=dict(fake_speech(self.root,text,{}),duration=.8)) for text in ['First.','Second.']]
+        beats=pacing.plan(self.root,dict(clip=dict(path=source.name),storyboard=dict(path=story.name,sha256=store.digest(story))),
+                          ['First.','Second.'],segments,1,30)
+        self.assertEqual([b['hold_frames'] for b in beats],[14,14])
+        self.assertAlmostEqual(segments[1]['start'],29/30)
+        silent,voiced=self.root/'silent.mp4',self.root/'holds.mp4'
+        preview._encode(source,silent,1,(320,180))
+        preview._encode(source,voiced,58/30,(320,180),beats=beats)
+        def frames(path):
+            with av.open(str(path)) as container:
+                return [frame.to_ndarray(format='gray').astype(np.int16) for frame in container.decode(video=0)]
+        native,actual=frames(silent),frames(voiced)
+        expected=native[:15]+[native[14]]*14+native[15:]+[native[-1]]*14
+        self.assertEqual(len(actual),len(expected))
+        self.assertEqual(len(native),30)
+        self.assertLess(max(np.abs(a-b).mean() for a,b in zip(actual,expected)),1.5)
+        self.assertGreater(np.abs(actual[14]-actual[29]).mean(),1)
+
+    def test_storyboard_changes_invalidate_preview_cache(self):
+        project,reviews=wf._load(self.root)
+        inputs=preview.snapshot(self.root,project,reviews,True)
+        initial=preview.fingerprint(inputs)
+        design=store.project_path(self.root,inputs['scenes'][0]['design']['path'])
+        story=design.parent/'storyboard.json'
+        store.atomic_write(story,dict(beats=[]))
+        changed=preview.snapshot(self.root,project,reviews,True)
+        self.assertNotEqual(initial,preview.fingerprint(changed))
+
+    def test_storyboard_mismatch_is_rejected(self):
+        story=self.root/'bad-story.json'
+        store.atomic_write(story,dict(beats=[dict(id='wrong',start=0,end=1,narration_excerpt='Different.')]))
+        with self.assertRaisesRegex(store.WorkflowError,'PREVIEW_TIMING'):
+            pacing.plan(self.root,dict(storyboard=dict(path=story.name,sha256=store.digest(story))),
+                        ['Original.'],[dict(text='Original.',audio=dict(duration=.6))],1,30)
 
     def test_incomplete_and_missing_price_do_not_synthesize(self):
         with store.locked_project(self.root):

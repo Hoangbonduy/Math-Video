@@ -10,6 +10,7 @@ from src.shared import _workflow_store as store
 from src.shared import workflow as wf
 from src.preview import audio
 from src.preview import export
+from src.preview import pacing
 from src.shared._workflow_store import WorkflowError
 from src.shared.job_session import _job_lock, _json_bytes
 from src.shared.media_tools import binary, run, probe, validate
@@ -44,7 +45,8 @@ def snapshot(root, project, reviews, with_audio=False):
             ref=design['manim_render'];clip=dict(path=ref['path'],sha256=ref['sha256'],version=design['version']);is_draft=True
         if not design or not clip:
             raise WorkflowError('PREVIEW_INPUT', 'Chưa có đủ video cảnh. Tạo hoặc chạy lại các cảnh còn thiếu trong Thiết kế cảnh.')
-        sources.append(dict(scene_id=sid, design=copy.deepcopy(design), clip=copy.deepcopy(clip),draft=is_draft))
+        sources.append(dict(scene_id=sid, design=copy.deepcopy(design), clip=copy.deepcopy(clip),
+                            storyboard=pacing.storyboard_reference(root, design), draft=is_draft))
     if not sources:
         raise WorkflowError('PREVIEW_INPUT', 'Chưa có cảnh để ghép.')
     voice = {key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if with_audio else None
@@ -55,7 +57,7 @@ def fingerprint(inputs):
     # UI action revisions and review decisions do not change preview media.
     ref = lambda a: dict(version=a['version'], sha256=a['sha256'], path=a['path'])
     identity = dict(script=ref(inputs['script']), scenes=[dict(scene_id=s['scene_id'],
-                    design=ref(s['design']), clip=ref(s['clip'])) for s in inputs['scenes']], voice=inputs['voice'], format_version=1)
+                    design=ref(s['design']), clip=ref(s['clip']), storyboard=s.get('storyboard')) for s in inputs['scenes']], voice=inputs['voice'], format_version=3)
     return hashlib.sha256(_json_bytes(identity)).hexdigest()
 
 
@@ -93,23 +95,28 @@ def _seconds(path):
     return float(stream.get('duration', data['format']['duration']))
 
 
-def _encode(source, output, seconds, resolution, speech=None):
-    original = _seconds(source)
+def _encode(source, output, seconds, resolution, speech=None, beats=None):
     width, height = resolution
-    vf = (f'setpts={seconds / original:.12f}*(PTS-STARTPTS),'
-          f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
-          f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x0D1726,setsar=1,fps={FPS},'
-          f'tpad=stop_mode=clone:stop_duration={seconds},trim=duration={seconds}')
+    base = ('setpts=PTS-STARTPTS,'
+            f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
+            f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x0D1726,setsar=1,fps={FPS}')
     args = [binary('ffmpeg'), '-y', '-v', 'error', '-i', str(source)]
     if speech:
         args += ['-i', str(speech)]
-    args += ['-vf', vf, '-map', '0:v:0', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p']
+    if beats:
+        args += ['-filter_complex', pacing.video_filter(base, beats, FPS), '-map', '[picture]']
+    else:
+        args += ['-vf', base + f',tpad=stop_mode=clone:stop_duration={seconds},trim=duration={seconds}', '-map', '0:v:0']
+    args += ['-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p']
     if speech:
         args += ['-map', '1:a:0', '-af', 'apad', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '1']
     else:
         args += ['-an']
     run(args + ['-t', str(seconds), '-movflags', '+faststart', str(output)])
-    validate(output, audio=bool(speech), resolution=list(resolution), fps=FPS)
+    metadata = validate(output, audio=bool(speech), resolution=list(resolution), fps=FPS)
+    video = next(stream for stream in metadata['streams'] if stream['codec_type'] == 'video')
+    if int(video['nb_frames']) != round(seconds * FPS):
+        raise WorkflowError('PREVIEW_TIMING', 'Encoded picture does not match the planned frame count.')
 
 
 def _generate_base(project_dir, with_audio=False):
@@ -149,18 +156,19 @@ def _generate_base(project_dir, with_audio=False):
             if not phrases:
                 raise WorkflowError('PREVIEW_INPUT', 'Cảnh thiếu lời dẫn: ' + sid)
             source_path = store.project_path(root, source['clip']['path'])
-            speech = None
+            # Motion uses the original timeline; only explicit beat holds add time.
+            seconds = math.ceil(_seconds(source_path) * FPS - 1e-4) / FPS
+            speech, beats = None, None
             if with_audio:
-                segments, local = [], .15
+                segments = []
                 for phrase in phrases:
                     ref = SYNTHESIZER(root, phrase, config)
-                    segments.append(dict(text=phrase, start=local, end=local + ref['duration'], audio=ref))
-                    local += ref['duration']
-                seconds = math.ceil((local + .15) * FPS) / FPS
+                    segments.append(dict(text=phrase, audio=ref))
                 speech = directory / f'scene_{index:03}.wav'
-                export.concat_audio([root / s['audio']['path'] for s in segments], speech, seconds)
+                beats = pacing.plan(root, source, phrases, segments, seconds, FPS)
+                seconds = beats[-1]['end_frame'] / FPS
+                pacing.speech_track(root, segments, speech, seconds)
             else:
-                seconds = math.ceil(_seconds(source_path) * FPS - 1e-6) / FPS
                 total = sum(len(t.split()) for t in phrases)
                 segments, local = [], 0.0
                 for phrase in phrases:
@@ -169,9 +177,14 @@ def _generate_base(project_dir, with_audio=False):
                     local = end
             cues.extend(dict(text=s['text'], start=offset+s['start'], end=offset+s['end'], scene_id=sid) for s in segments)
             clip = directory / f'scene_{index:03}.mp4'
-            _encode(source_path, clip, seconds, resolution, speech)
+            _encode(source_path, clip, seconds, resolution, speech, beats)
             clips.append(clip)
-            scenes.append(dict(scene_id=sid, title=narration[sid].get('title') or f'Cảnh {index+1:02}', start=offset, end=offset+seconds))
+            scene = dict(scene_id=sid, title=narration[sid].get('title') or f'Cảnh {index+1:02}', start=offset, end=offset+seconds)
+            if beats is not None:
+                scene['pacing'] = 'native_motion_with_beat_holds'
+                scene['beats'] = beats
+                scene['hold_seconds'] = sum(b['hold_frames'] for b in beats) / FPS
+            scenes.append(scene)
             offset += seconds
         captions = directory / 'captions.srt'
         captions.write_text('\n\n'.join(f'{i}\n{export.stamp(c["start"])} --> {export.stamp(c["end"])}\n{c["text"]}' for i, c in enumerate(cues, 1)) + '\n', encoding='utf-8')
