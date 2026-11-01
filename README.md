@@ -180,10 +180,20 @@ python main.py review --project-dir data/projects/my_ai_video \
 Không tự duyệt hoặc tạo thiết kế cảnh. [Hướng dẫn API, chi phí, khôi phục và nghiệm
 thu live](docs/checkpoint_4.md). Brief mẫu nằm trong [examples/brief.json](examples/brief.json).
 
+Kịch bản mới được viết thành một đoạn lời đọc trước, sau đó qua lượt biên tập
+toàn đoạn rồi mới chia cảnh và thêm hướng dẫn Manim. Biên tập rà lặp ý, câu nối,
+hook/payoff, cách nói và số cần chuyển lên hình. Bộ kiểm tra chặn câu lặp nguyên
+văn, câu đệm, cảnh quá hai câu và quá một số dài trong lời đọc; lặp nghĩa và độ
+tự nhiên do lượt AI biên tập xử lý, vẫn cần người dùng nghe/đọc thử khi duyệt.
+Thời lượng lấy nguyên khoảng nhập trên UI; không áp cố định 30–35 giây. Bản nháp
+liền mạch lưu ở `generation/<job_id>/narration_draft.json`; tiếp tục job dùng lại
+phản hồi đã lưu. Job dở trước nâng cấp tiếp tục luồng cũ để giữ lịch sử lượt gọi;
+lượt tạo hoặc yêu cầu sửa phiên bản tiếp theo dùng luồng mới.
+
 Kiểm thử C4 offline không cần key:
 
 ```bash
-python -S -m unittest tests.test_content tests.test_openrouter tests.test_generation -v
+python -S -m unittest tests.test_content tests.test_openrouter tests.test_generation tests.test_narration -v
 ```
 
 Nghiệm thu tính phí được bật riêng bằng `RUN_LIVE_AI_TESTS=1` và key trong môi

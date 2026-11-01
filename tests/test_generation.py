@@ -77,7 +77,7 @@ class GenerationTests(WorkflowCase):
             self.assertEqual(store.digest(self.project / component['path']), component['sha256'])
         data = store.read_json(self.project / item['bundle']['script.json']['path'])
         self.assertEqual(data['duration_estimate']['estimated_seconds'], 40)
-        self.assertEqual(len(self.router.requests), 2)
+        self.assertEqual(len(self.router.requests), 3)
         self.assertLessEqual(state['generation']['budget_used_usd'], 0.1)
         self.assertFalse((self.project / 'designs').exists())
 
@@ -146,7 +146,7 @@ class GenerationTests(WorkflowCase):
         self.router.invalid_drafts = 1
         state = self.generate()
         self.assertEqual(state['status'], 'awaiting_review')
-        self.assertEqual(len(self.router.requests), 3)
+        self.assertEqual(len(self.router.requests), 4)
 
     def test_failed_repair_keeps_diagnostics_without_submitting_script(self):
         self.router.invalid_drafts = 3
@@ -179,7 +179,7 @@ class GenerationTests(WorkflowCase):
         self.fetch.side_effect = fake_fetch
         state = run_workflow(self.project, ai=True)
         self.assertEqual(state['status'], 'awaiting_review')
-        self.assertEqual(len(self.router.requests), 2)  # cached search + one new draft
+        self.assertEqual(len(self.router.requests), 3)  # cached search + narration + editorial split
         self.assertIsNone(state['generation']['last_error'])
 
     def test_bundle_changes_block_approval(self):

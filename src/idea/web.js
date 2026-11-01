@@ -1,5 +1,9 @@
 'use strict';
 
+const editingScriptScenes = new Set();
+const scriptDrafts = new Map();
+let savingScriptScene = null;
+
 function ideaStorageKey() { return 'math-video-idea:' + state.project_id; }
 function captureIdea() {
   if (!$('idea-form')) return ideaDraft;
@@ -36,7 +40,18 @@ function renderIdea() {
   const content = el('section', undefined, form, 'card idea-card');
   el('h2', 'Nội dung video', content);
   field(content, 'Chủ đề / câu hỏi mở đầu', 'textarea', draft.topic ?? state.topic, 'topic').required = true;
-  field(content, 'Sau khi xem, người xem hiểu được gì?', 'textarea', draft.goal ?? context.script?.main_idea, 'goal');
+  const goal = field(content, 'Ý tưởng kịch bản', 'textarea', draft.goal ?? context.script?.main_idea, 'goal');
+  goal.className = 'tall';
+  goal.placeholder = 'Viết 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:\n1. Hook: điều nghe vô lý [1 câu]\n2. Xuất phát: chỉ 1 quy tắc / 1 con số gốc\n3. Leo: 2–3 mốc quen thuộc, tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…\n4. Payoff: trả lời đúng câu đã hỏi ở Hook\n5. Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.\n6. Số hiện hình: số nào miệng nói, số nào để Manim hiện trên màn hình.';
+  const goalGuide = el('small', undefined, goal.parentElement, 'field-guide');
+  el('span', 'Gồm đúng 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:', goalGuide);
+  const goalList = el('ol', undefined, goalGuide);
+  el('li', 'Hook: điều nghe vô lý [1 câu]', goalList);
+  el('li', 'Xuất phát: chỉ 1 quy tắc / 1 con số gốc', goalList);
+  el('li', 'Leo: 2–3 mốc quen thuộc, tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…', goalList);
+  el('li', 'Payoff: trả lời đúng câu đã hỏi ở Hook', goalList);
+  el('li', 'Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.', goalList);
+  el('li', 'Số hiện hình: số nào miệng nói, số nào để Manim hiện trên màn hình.', goalList);
   const row = el('div', undefined, content, 'field-row');
   field(row, 'Người xem', 'input', draft.audience ?? brief.audience, 'audience');
   const duration = field(row, 'Độ dài dự kiến', 'input', draft.duration ?? (brief.min_seconds ? brief.min_seconds + '–' + brief.max_seconds + ' giây' : '30–60 giây'), 'duration');
@@ -47,7 +62,14 @@ function renderIdea() {
   expression.value = draft.expression || expression.options[0].value;
   const direction = el('section', undefined, form, 'card idea-card');
   el('h2', 'Định hướng hình ảnh', direction);
-  field(direction, 'Mô tả phong cách', 'textarea', draft.style ?? brief.requirements, 'style').className = 'tall';
+  const style = field(direction, 'Cách hiện bằng Manim', 'textarea', draft.style ?? brief.requirements, 'style');
+  style.className = 'tall';
+  style.placeholder = '1. Đối tượng chính + chuyển động: là gì, biến đổi thế nào?\n2. Khi scale vỡ thì chuyển sang mốc so sánh nào?';
+  const styleGuide = el('small', undefined, style.parentElement, 'field-guide');
+  el('span', 'Gồm 2 dòng:', styleGuide);
+  const styleList = el('ol', undefined, styleGuide);
+  el('li', 'Đối tượng chính + chuyển động: là gì, biến đổi thế nào?', styleList);
+  el('li', 'Khi scale vỡ thì chuyển sang mốc so sánh nào?', styleList);
   const reference = el('label', undefined, direction, 'field'); el('span', 'Tài liệu / video tham khảo', reference);
   const file = el('input', undefined, reference, 'reference-file'); file.type = 'file'; file.id = 'idea-reference';
   const fileName = el('small', draft.reference || 'Chưa chọn tệp', reference); fileName.id = 'idea-reference-name';
@@ -92,15 +114,151 @@ function renderScript() {
   }
   button(panel, 'Thu gọn kịch bản', () => { scriptExpanded = false; render(); }, 'text-button');
   button(panel, 'Xem lịch sử (' + scriptHistory.items.length + ')', () => navigate('history'), 'text-button');
+  const canEdit = state.stage === 'script' && !workflowBusy;
+  const scenes = context.script?.scenes || [];
+  const allEditing = scenes.length > 0 && scenes.every(s => editingScriptScenes.has(s.scene_id));
+  if (canEdit && scenes.length > 0) {
+    button(panel, allEditing ? 'Hủy sửa kịch bản' : 'Sửa tất cả lời đọc & hình ảnh', () => {
+      if (allEditing) {
+        editingScriptScenes.clear();
+      } else {
+        scenes.forEach(s => editingScriptScenes.add(s.scene_id));
+      }
+      render();
+    }, 'text-button');
+  }
   badge(panel, review?.status);
   el('p', artifact.version + (context.duration_estimate?.estimated_seconds ? ' · Ước tính ' + context.duration_estimate.estimated_seconds.toFixed(1) + ' giây' : ''), panel, 'muted');
   if (context.script?.title) el('h3', context.script.title, panel);
   if (context.script?.main_idea) el('p', context.script.main_idea, panel);
-  for (const scene of context.script?.scenes || []) {
+  for (const scene of scenes) {
     const section = el('div', undefined, panel, 'script-scene');
-    el('h3', scene.scene_id, section);
-    el('p', scene.narration, section);
-    el('small', 'Hình ảnh: ' + scene.visual_intent, section);
+    const header = el('div', undefined, section, 'script-scene-header');
+    el('h3', scene.scene_id, header);
+    const isEditing = editingScriptScenes.has(scene.scene_id);
+    const draftKey = artifact.version + ':' + scene.scene_id;
+    const currentDraft = scriptDrafts.get(draftKey) || {
+      narration: scene.narration,
+      visual_intent: scene.visual_intent
+    };
+
+    if (canEdit && !isEditing) {
+      button(header, 'Sửa lời đọc & hình ảnh', () => {
+        editingScriptScenes.add(scene.scene_id);
+        render();
+      }, 'text-button');
+    }
+
+    if (isEditing) {
+      const editBox = el('div', undefined, section, 'script-scene-edit');
+
+      const narrField = el('label', undefined, editBox, 'field');
+      el('span', 'Lời đọc', narrField);
+      const narrArea = el('textarea', undefined, narrField, 'script-edit-narration');
+      narrArea.id = 'edit-narration-' + scene.scene_id;
+      narrArea.value = currentDraft.narration ?? scene.narration;
+      narrArea.placeholder = 'Nhập lời đọc cho cảnh…';
+      narrArea.oninput = () => {
+        const d = scriptDrafts.get(draftKey) || { narration: scene.narration, visual_intent: scene.visual_intent };
+        d.narration = narrArea.value;
+        scriptDrafts.set(draftKey, d);
+      };
+
+      const visField = el('label', undefined, editBox, 'field');
+      el('span', 'Hình ảnh (ý tưởng minh họa)', visField);
+      const visArea = el('textarea', undefined, visField, 'script-edit-visual');
+      visArea.id = 'edit-visual-' + scene.scene_id;
+      visArea.value = currentDraft.visual_intent ?? scene.visual_intent;
+      visArea.placeholder = 'Nhập mô tả hình ảnh cho cảnh…';
+      visArea.oninput = () => {
+        const d = scriptDrafts.get(draftKey) || { narration: scene.narration, visual_intent: scene.visual_intent };
+        d.visual_intent = visArea.value;
+        scriptDrafts.set(draftKey, d);
+      };
+
+      const sceneActions = el('div', undefined, editBox, 'actions script-scene-actions');
+      const saveBtn = button(sceneActions, 'Lưu cảnh ' + scene.scene_id, async () => {
+        const narr = (narrArea.value || '').trim();
+        const vis = (visArea.value || '').trim();
+        if (!narr) { notice('Lời đọc của cảnh ' + scene.scene_id + ' không được để trống.', true); narrArea.focus(); return; }
+        if (!vis) { notice('Mô tả hình ảnh của cảnh ' + scene.scene_id + ' không được để trống.', true); visArea.focus(); return; }
+        saveBtn.textContent = 'Đang lưu…';
+        saveBtn.disabled = true;
+        const ok = await action('script-edit', {
+          version: artifact.version,
+          sha256: artifact.sha256,
+          scene_id: scene.scene_id,
+          narration: narr,
+          visual_intent: vis
+        });
+        if (ok) {
+          scriptDrafts.delete(draftKey);
+          editingScriptScenes.delete(scene.scene_id);
+          notice('Đã lưu lời đọc và hình ảnh cảnh ' + scene.scene_id + '.');
+          render();
+        } else {
+          saveBtn.textContent = 'Lưu cảnh ' + scene.scene_id;
+          saveBtn.disabled = false;
+        }
+      }, 'primary');
+
+      const cancelBtn = button(sceneActions, 'Hủy', () => {
+        scriptDrafts.delete(draftKey);
+        editingScriptScenes.delete(scene.scene_id);
+        render();
+      });
+    } else {
+      el('p', scene.narration, section);
+      el('small', 'Hình ảnh: ' + scene.visual_intent, section);
+    }
+  }
+
+  if (editingScriptScenes.size > 1 && canEdit) {
+    const bulkBox = el('div', undefined, panel, 'card script-bulk-edit-bar');
+    el('strong', 'Đang sửa ' + editingScriptScenes.size + ' cảnh', bulkBox);
+    const bulkActions = el('div', undefined, bulkBox, 'actions');
+    const saveAllBtn = button(bulkActions, 'Lưu tất cả cảnh đang sửa', async () => {
+      const updates = [];
+      for (const sid of editingScriptScenes) {
+        const sc = scenes.find(s => s.scene_id === sid);
+        if (!sc) continue;
+        const narrEl = $('edit-narration-' + sid);
+        const visEl = $('edit-visual-' + sid);
+        const narr = (narrEl ? narrEl.value : sc.narration).trim();
+        const vis = (visEl ? visEl.value : sc.visual_intent).trim();
+        if (!narr) { notice('Lời đọc của cảnh ' + sid + ' không được để trống.', true); narrEl?.focus(); return; }
+        if (!vis) { notice('Mô tả hình ảnh của cảnh ' + sid + ' không được để trống.', true); visEl?.focus(); return; }
+        updates.push({ scene_id: sid, narration: narr, visual_intent: vis });
+      }
+      if (!updates.length) return;
+      saveAllBtn.textContent = 'Đang lưu tất cả…';
+      saveAllBtn.disabled = true;
+      const ok = await action('script-edit', {
+        version: artifact.version,
+        sha256: artifact.sha256,
+        scenes: updates
+      });
+      if (ok) {
+        for (const sid of editingScriptScenes) {
+          scriptDrafts.delete(artifact.version + ':' + sid);
+        }
+        editingScriptScenes.clear();
+        notice('Đã lưu thay đổi cho ' + updates.length + ' cảnh.');
+        render();
+      } else {
+        saveAllBtn.textContent = 'Lưu tất cả cảnh đang sửa';
+        saveAllBtn.disabled = false;
+      }
+    }, 'primary');
+
+    const cancelAllBtn = button(bulkActions, 'Hủy tất cả', () => {
+      for (const sid of editingScriptScenes) {
+        scriptDrafts.delete(artifact.version + ':' + sid);
+      }
+      editingScriptScenes.clear();
+      render();
+    });
+    cancelAllBtn.disabled = Boolean(savingScriptScene);
   }
   downloadLink(panel, 'Đọc kịch bản đầy đủ và đối chiếu nguồn', artifact.path);
   for (const source of context.sources || []) {

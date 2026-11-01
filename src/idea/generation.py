@@ -12,6 +12,8 @@ from src.shared.ai_config import get_backend, get_model, BUDGET_USD, MAX_REQUEST
 from src.idea.content import SCRIPT_SCHEMA, REVISION_SCHEMA, parse_object, validate_script, writing_messages, markdown, align_evidence_spacing
 from src.shared.openrouter_client import HTTPFailure, redact, response_text
 from src.idea.research import collect_sources
+from src.idea.narration import (PROMPT_VERSION, NARRATION_SCHEMA, narration_messages,
+                                editing_messages, validate_narration, validate_editorial)
 
 
 from src.shared.job_session import Session, _now, _json_bytes, _used, _job_lock
@@ -29,6 +31,32 @@ def summary(root, reference):
         from src.shared.ai_client import subscription_summary
         result.update(subscription_summary(job['calls'],job['pricing']['billing_source']))
     return result
+
+
+def _validated_call(session, phase, messages, schema, validate, repairs):
+    response = session.call(phase, messages, schema=schema)
+    while True:
+        try:
+            return validate(parse_object(response_text(response)))
+        except (WorkflowError, TypeError, KeyError, ValueError) as exc:
+            if isinstance(exc, WorkflowError) and exc.code == 'MODEL_MISMATCH':
+                raise
+            store.atomic_write(session.directory / 'validation_error.json',
+                               dict(error=redact(str(exc)), repair_index=repairs[0], phase=phase))
+            if repairs[0] >= 2:
+                raise
+            choices = response.get('choices') or [{}]
+            partial = choices[0].get('message', {}).get('content', '')
+            messages = messages + [dict(role='assistant', content=partial if isinstance(partial, str) else ''),
+                dict(role='user', content=(
+                    'Sửa lỗi cấu trúc, bằng chứng, thời lượng hoặc biên tập lời đọc dưới đây. '
+                    'Đọc lại toàn bộ lời đọc để sửa mạch kể, không vá từng cảnh độc lập. '
+                    'Chỉ dùng nguồn đã lưu. Quote phải là chuỗi liên tục chép nguyên văn, giữ đúng chữ hoa '
+                    'và khoảng trắng từ text nguồn. Giữ thời lượng người dùng chọn trong brief. '
+                    'Nếu chuyển số sang visual_intent thì không được làm mất dữ kiện. Lỗi: ' + str(exc)))]
+            repairs[0] += 1
+            repair_phase = 'repair' if repairs[0] == 1 else 'repair_2'
+            response = session.call(repair_phase, messages, schema=schema)
 
 
 def _produce(session, topic, brief, previous=None, feedback=None):
@@ -71,27 +99,28 @@ def _produce(session, topic, brief, previous=None, feedback=None):
         raise WorkflowError("RESEARCH_INSUFFICIENT", "Two successfully read sources are required")
     job["status"] = "writing"
     session.save()
-    messages = writing_messages(topic, brief, research["sources"], previous=previous["script"] if previous else None, feedback=feedback)
-    response = session.call("draft", messages, schema=SCRIPT_SCHEMA)
-    for repair_index in range(3):
-        try:
-            script = align_evidence_spacing(parse_object(response_text(response)), research['sources'])
-            duration = validate_script(script, research["sources"], brief)
-            break
-        except (WorkflowError, TypeError, KeyError, ValueError) as exc:
-            if isinstance(exc, WorkflowError) and exc.code == "MODEL_MISMATCH":
-                raise
-            store.atomic_write(directory / "validation_error.json", dict(error=redact(str(exc)), repair_index=repair_index))
-            if repair_index == 2:
-                raise
-            partial = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            messages = messages + [dict(role="assistant", content=partial if isinstance(partial, str) else ""),
-                                   dict(role="user", content=("Fix the JSON, evidence or duration validation failure. Use only the saved sources. "
-                                       "For each invalid quote, copy an exact contiguous substring from the supplied source text. "
-                                       "Preserve the source capitalization and duplicated math text; alternatively choose a shorter exact sentence supporting the claim. "
-                                       "Do not paraphrase source quotations. Error: " + str(exc)))]
-            phase = "repair" if repair_index == 0 else "repair_2"
-            response = session.call(phase, messages, schema=SCRIPT_SCHEMA)
+    prompt_version = job['input'].get('prompt_version', 1)
+    previous_script = previous['script'] if previous else None
+    repairs = [0]  # Shared across both phases; revision + search + 2 phases + 2 repairs <= 6 calls.
+    if prompt_version >= 2:
+        draft = _validated_call(session, 'narration',
+            narration_messages(topic, brief, research['sources'], previous=previous_script, feedback=feedback),
+            NARRATION_SCHEMA, lambda value: validate_narration(value, research['sources'], brief), repairs)
+        store.materialize(directory, 'narration_draft.json', content=_json_bytes(draft))
+        messages = editing_messages(topic, brief, research['sources'], draft,
+                                    previous=previous_script, feedback=feedback)
+    else:
+        # Resume pre-upgrade calls with their existing phase/schema and accounting.
+        messages = writing_messages(topic, brief, research['sources'], previous=previous_script, feedback=feedback)
+
+    def validate(value):
+        script = align_evidence_spacing(value, research['sources'])
+        duration = validate_script(script, research['sources'], brief)
+        if prompt_version >= 2:
+            validate_editorial(script)
+        return script, duration
+
+    script, duration = _validated_call(session, 'draft', messages, SCRIPT_SCHEMA, validate, repairs)
     research["claims"] = script["claims"]
     bundle = {
         "script.json": dict(script=script, duration_estimate=duration, brief=brief),
@@ -99,7 +128,7 @@ def _produce(session, topic, brief, previous=None, feedback=None):
         "generation.json": dict(job_id=job["job_id"], model=job["input"]["model"], pricing=job["pricing"],
                                  calls=job["calls"], budget_usd=None if job["pricing"].get("billing_source") in SUBSCRIPTION_SOURCES else BUDGET_USD, budget_used_usd=None if job["pricing"].get("billing_source") in SUBSCRIPTION_SOURCES else _used(job),
                                   billing_source=job["pricing"].get("billing_source","api"),
-                                 feedback=feedback, base_version=job["base_version"], prompt_version=1),
+                                 feedback=feedback, base_version=job["base_version"], prompt_version=prompt_version),
     }
     for name, data in bundle.items():
         # Immutable bundle files can be recreated from durable model responses.
@@ -151,6 +180,12 @@ def run_ai(project_dir, *, retry_uncertain=None):
             fingerprint = dict(project_id=project["project_id"], topic=project["topic"], brief=brief,
                                base_version=base["version"] if base else None,
                                base_sha256=base["sha256"] if base else None, feedback=feedback, model=model)
+            # Keep the exact fingerprint of an unfinished old job so upgrading never resets paid calls.
+            if reference and saved_job['version'] == version and not switching_backend:
+                if 'prompt_version' in saved_job['input']:
+                    fingerprint['prompt_version'] = saved_job['input']['prompt_version']
+            else:
+                fingerprint['prompt_version'] = PROMPT_VERSION
             if subscription_billing():fingerprint['ai_backend']=get_backend()
             job_id = "script_" + version + "_" + hashlib.sha256(_json_bytes(fingerprint)).hexdigest()[:16]
             relative = f"generation/{job_id}/job.json"

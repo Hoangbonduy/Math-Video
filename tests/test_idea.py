@@ -1,5 +1,6 @@
 """Opening form -> script -> reviewed scene inputs, with offline providers."""
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -9,7 +10,8 @@ from unittest.mock import patch
 
 from src.shared import workflow as wf
 from src.shared import _workflow_store as store
-from src.idea.service import apply_idea, save_draft, final_resolution
+from src.idea.service import apply_idea, save_draft, final_resolution, edit_script
+from src.shared.ai_config import MODEL
 from src.shared.review import record_review
 from src.shared.review_server import ReviewServer
 from tests.ai_support import FakeRouter, fake_fetch
@@ -25,6 +27,7 @@ IDEA = dict(topic='Vì sao có ngày và đêm?', goal='Hiểu sự tự quay c�
 class IdeaCase(WorkflowCase):
     def setUp(self):
         super().setUp()
+        patch.dict(os.environ, AI_BACKEND='openrouter', OPENROUTER_MODEL=MODEL).start()
         wf.create_project(self.project, 'Chủ đề cũ')
         self.router = FakeRouter()
         self.addCleanup(patch.stopall)
@@ -114,6 +117,40 @@ class IdeaTests(IdeaCase):
         self.assertEqual(archived[0].read_bytes(),published)
         self.assertEqual(wf.run_workflow(self.project,ai=True)['pending_reviews'][0]['version'],'v002')
 
+    def test_script_edit_updates_narration_and_visual_intent(self):
+        apply_idea(self.project, IDEA)
+        wf.run_workflow(self.project, ai=True)
+        status = wf.get_status(self.project)
+        artifact = next(a for a in status['artifacts'] if a['stage'] == 'script')
+        script_before = store.read_json(self.project / artifact['bundle']['script.json']['path'])['script']
+        sc1 = script_before['scenes'][0]
+
+        new_narr = "Lời đọc mới cho cảnh một đã được người dùng chỉnh sửa trực tiếp."
+        new_vis = "Hình ảnh minh họa mới hiển thị quả địa cầu xoay tròn rõ ràng."
+
+        result = edit_script(self.project, artifact['version'], scene_id=sc1['scene_id'],
+                             narration=new_narr, visual_intent=new_vis, expected_sha256=artifact['sha256'])
+        self.assertTrue(result['ok'])
+        self.assertNotEqual(result['sha256'], artifact['sha256'])
+
+        project, _ = wf._load(self.project)
+        updated_artifact = wf._latest(project, 'script', None)
+        self.assertEqual(updated_artifact['sha256'], result['sha256'])
+
+        payload = store.read_json(self.project / updated_artifact['bundle']['script.json']['path'])
+        self.assertEqual(payload['script']['scenes'][0]['narration'], new_narr)
+        self.assertEqual(payload['script']['scenes'][0]['visual_intent'], new_vis)
+
+        md = (self.project / updated_artifact['path']).read_text(encoding='utf-8')
+        self.assertIn(new_narr, md)
+        self.assertIn(new_vis, md)
+
+        wf._verify(self.project, updated_artifact)
+
+        record_review(self.project, 'script', updated_artifact['version'], 'approve', read_seconds=35, expected_sha256=updated_artifact['sha256'])
+        self.assertEqual(wf.get_status(self.project)['stage'], 'scene_design')
+        self.error('WRONG_STAGE', edit_script, self.project, updated_artifact['version'], scene_id=sc1['scene_id'], narration="Lỗi")
+
 
 class IdeaHttpTests(IdeaCase):
     def test_http_starts_from_form_and_script_approval_queues_designs(self):
@@ -145,6 +182,15 @@ class IdeaHttpTests(IdeaCase):
         state=idle(); artifact=state['pending_reviews'][0]
         self.assertEqual(get('context')['brief']['audience'],IDEA['audience'])
         self.assertTrue(get('context')['sources'])
+        # Edit script narration & visual_intent via API
+        sc_id = get('context')['script']['scenes'][0]['scene_id']
+        edit_res = post('script-edit', version=artifact['version'], sha256=artifact['sha256'],
+                        scene_id=sc_id, narration="Lời đọc mới qua API", visual_intent="Hình ảnh mới qua API")
+        self.assertTrue(edit_res.get('ok'))
+        ctx = get('context')
+        self.assertEqual(ctx['script']['scenes'][0]['narration'], "Lời đọc mới qua API")
+        self.assertEqual(ctx['script']['scenes'][0]['visual_intent'], "Hình ảnh mới qua API")
+        artifact = get('state')['project']['pending_reviews'][0]
         post('approve',stage='script',version=artifact['version'],sha256=artifact['sha256'],read_seconds=40)
         state=idle()
         self.assertEqual(state['stage'],'scene_design')

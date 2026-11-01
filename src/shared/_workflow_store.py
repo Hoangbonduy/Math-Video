@@ -30,7 +30,7 @@ def project_path(root, relative):
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise WorkflowError("STATE_CORRUPT", "Artifact paths must stay inside the project")
     target = root / path
-    if not target.resolve().is_relative_to(root):
+    if not target.resolve().is_relative_to(Path(root).resolve()):
         raise WorkflowError("STATE_CORRUPT", "Artifact path points outside the project")
     return target
 

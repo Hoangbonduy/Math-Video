@@ -299,6 +299,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/idea-draft':
                 from src.idea.service import save_draft
                 save_draft(root,data['idea'])
+            elif self.path=='/api/script-edit':
+                from src.idea.service import edit_script
+                edit_script(root, version, scenes=data.get('scenes'), scene_id=sid, narration=data.get('narration'), visual_intent=data.get('visual_intent'), expected_sha256=checksum)
             elif self.path=='/api/start':
                 from src.idea.service import apply_idea
                 with self.server.jobs_lock:

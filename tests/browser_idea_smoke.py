@@ -31,10 +31,10 @@ try:
         assert page.evaluate('document.activeElement.id')=='idea-topic'
         assert not page.request.get(url+'/api/state').json()['project']['artifacts']
         topic.fill('Vì sao có ngày và đêm?')
-        goal=page.get_by_label('Sau khi xem, người xem hiểu được gì?')
+        goal=page.get_by_label('Ý tưởng kịch bản')
         goal.fill('Hiểu sự tự quay của Trái Đất')
         page.get_by_label('Người xem',exact=True).fill('Học sinh lớp 6')
-        page.get_by_label('Mô tả phong cách').fill('Nền sáng, quả địa cầu đơn giản')
+        page.get_by_label('Cách hiện bằng Manim').fill('Nền sáng, quả địa cầu đơn giản')
         page.get_by_label('Độ dài dự kiến').fill('30–45 giây')
         page.get_by_label('Facebook · video dọc').check()
         page.get_by_role('button',name='Lưu bản nháp',exact=True).click()

@@ -23,11 +23,11 @@ try:
         page.get_by_role('tab',name='Hình minh họa',exact=True).click()
         page.get_by_text('Hình minh họa & chuyển động',exact=True).wait_for()
         page.get_by_role('link',name='01 Ý tưởng').click()
-        page.get_by_label('Sau khi xem, người xem hiểu được gì?').fill('Hiểu tốc độ thay đổi')
+        page.get_by_label('Ý tưởng kịch bản').fill('Hiểu tốc độ thay đổi')
         page.get_by_role('button',name='Lưu bản nháp',exact=True).click()
         page.reload()
-        page.get_by_label('Sau khi xem, người xem hiểu được gì?').wait_for()
-        assert page.get_by_label('Sau khi xem, người xem hiểu được gì?').input_value()=='Hiểu tốc độ thay đổi'
+        page.get_by_label('Ý tưởng kịch bản').wait_for()
+        assert page.get_by_label('Ý tưởng kịch bản').input_value()=='Hiểu tốc độ thay đổi'
         page.get_by_role('link',name='03 Xem bản dựng').click()
         page.locator('#scene-strip button').nth(1).click()
         assert page.locator('#controls').inner_text().startswith('scene_2')

@@ -41,9 +41,9 @@ def inputs(values):
     if not match:
         raise WorkflowError('INVALID_INPUT', 'Độ dài cần có dạng 30–60 giây.')
     requirements = '\n'.join(text for text in (
-        'Mục tiêu người xem: ' + idea['goal'] if idea.get('goal') else '',
+        'Ý tưởng kịch bản (6 dòng):\n' + idea['goal'] if idea.get('goal') else '',
         'Cách thể hiện: ' + idea['expression'] if idea.get('expression') else '',
-        'Phong cách: ' + idea['style'] if idea.get('style') else '',
+        'Cách hiện bằng Manim (2 dòng):\n' + idea['style'] if idea.get('style') else '',
     ) if text)
     brief = normalize_brief(dict(min_seconds=int(match[1]), max_seconds=int(match[2]),
                                  **({'audience': idea['audience']} if idea.get('audience') else {}),
@@ -103,3 +103,121 @@ def apply_idea(project_dir, values, *, force_new=False):
 
 def final_resolution(project):
     return [1080, 1920] if project.get('idea', {}).get('format') == 'portrait' else [1920, 1080]
+
+
+def _write_text(path, text):
+    from tempfile import NamedTemporaryFile
+    from pathlib import Path
+    import os
+    temporary = None
+    try:
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as f:
+            temporary = Path(f.name)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+        store._sync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def edit_script(project_dir, version=None, scenes=None, *, scene_id=None, narration=None, visual_intent=None, expected_sha256=None):
+    from src.idea.content import markdown
+
+    if scenes is None:
+        scenes = []
+    if scene_id is not None:
+        item = dict(scene_id=scene_id)
+        if narration is not None:
+            item['narration'] = narration
+        if visual_intent is not None:
+            item['visual_intent'] = visual_intent
+        scenes = [item]
+
+    if not isinstance(scenes, list) or not scenes:
+        raise WorkflowError('INVALID_INPUT', 'Cần cung cấp nội dung cảnh để chỉnh sửa.')
+
+    with store.locked_project(project_dir) as root:
+        project, reviews = wf._load(root)
+        if project['stage'] != 'script':
+            raise WorkflowError('WRONG_STAGE', f"Hiện đang ở bước {project['stage']}, không thể chỉnh sửa kịch bản.")
+        artifact = wf._latest(project, 'script', None)
+        if not artifact or artifact.get('deleted_at') or artifact.get('invalidated'):
+            raise WorkflowError('SCRIPT_NOT_FOUND', 'Không tìm thấy kịch bản hiện tại.')
+        if version and artifact['version'] != version:
+            raise WorkflowError('STALE_REVIEW', 'Phiên bản kịch bản không khớp. Hãy tải lại trang.')
+        if expected_sha256 and artifact['sha256'] != expected_sha256:
+            raise WorkflowError('STALE_REVIEW', 'Kịch bản đã thay đổi. Hãy tải lại trang.')
+        review = wf._request(reviews, artifact)
+        if review['status'] not in ('pending', 'changes_requested'):
+            raise WorkflowError('REVIEW_LOCKED', 'Kịch bản đã được duyệt hoặc xử lý, không thể chỉnh sửa trực tiếp.')
+        if 'script.json' not in artifact.get('bundle', {}):
+            raise WorkflowError('STRUCTURED_SCRIPT_REQUIRED', 'Không tìm thấy tệp script.json để chỉnh sửa.')
+
+        wf._verify(root, artifact)
+
+        script_rel = artifact['bundle']['script.json']['path']
+        script_path = store.project_path(root, script_rel)
+        payload = store.read_json(script_path)
+        script_data = payload.get('script', {})
+        current_scenes = script_data.get('scenes', [])
+        scene_map = {s['scene_id']: s for s in current_scenes}
+
+        for update in scenes:
+            if not isinstance(update, dict):
+                raise WorkflowError('INVALID_INPUT', 'Dữ liệu chỉnh sửa cảnh không hợp lệ.')
+            sid = update.get('scene_id')
+            if not sid or sid not in scene_map:
+                raise WorkflowError('INVALID_INPUT', f'Không tìm thấy cảnh {sid}.')
+            target = scene_map[sid]
+            if 'narration' in update:
+                narr = update['narration']
+                if not isinstance(narr, str) or not narr.strip():
+                    raise WorkflowError('INVALID_INPUT', f'Lời đọc của cảnh {sid} không được để trống.')
+                target['narration'] = narr.strip()
+            if 'visual_intent' in update:
+                vis = update['visual_intent']
+                if not isinstance(vis, str) or not vis.strip():
+                    raise WorkflowError('INVALID_INPUT', f'Mô tả hình ảnh của cảnh {sid} không được để trống.')
+                target['visual_intent'] = vis.strip()
+
+        brief = project.get('brief') or payload.get('brief', {})
+        rate = brief.get('read_units_per_second') or payload.get('duration_estimate', {}).get('read_units_per_second') or 3.5
+        all_narration = " ".join(s['narration'].strip() for s in current_scenes)
+        units = len(all_narration.split())
+        seconds = units / rate
+        duration = dict(
+            narration=all_narration,
+            estimated_seconds=seconds,
+            whitespace_units=units,
+            read_units_per_second=rate,
+            estimate_only=True
+        )
+        payload['duration_estimate'] = duration
+        payload['script'] = script_data
+
+        store.atomic_write(script_path, payload)
+        artifact['bundle']['script.json']['sha256'] = store.digest(script_path)
+
+        sources = []
+        research_rel = artifact.get('bundle', {}).get('research.json', {}).get('path')
+        if research_rel:
+            research_path = store.project_path(root, research_rel)
+            if research_path.is_file():
+                sources = store.read_json(research_path).get('sources', [])
+
+        md_text = markdown(script_data, sources, duration)
+        md_path = store.project_path(root, artifact['path'])
+        _write_text(md_path, md_text)
+        artifact['sha256'] = store.digest(md_path)
+
+        if artifact.get('job_id'):
+            gen_md = store.project_path(root, f"generation/{artifact['job_id']}/script.md")
+            if gen_md.exists():
+                _write_text(gen_md, md_text)
+
+        artifact['duration_estimate'] = duration
+        wf._save(root, project, reviews)
+        return dict(ok=True, version=artifact['version'], sha256=artifact['sha256'], duration_estimate=duration)

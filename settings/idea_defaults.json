@@ -1,10 +1,10 @@
 {
   "topic": "Đạo hàm giúp hiểu tốc độ thay đổi tức thời như thế nào?",
-  "goal": "Đạo hàm đo tốc độ thay đổi tức thời, tức là tốc độ ngay tại một thời điểm.",
+  "goal": "1. Hook: Đạo hàm nghe trừu tượng nhưng thực ra chỉ là vận tốc tức thời trên đồng hồ xe máy.\n2. Xuất phát: Lấy quãng đường chia thời gian cho vận tốc trung bình.\n3. Leo: Khi khoảng thời gian co dần về 0, rồi trên đồ thị cát tuyến xoay thành tiếp tuyến; đến lúc chạm một điểm thì vận tốc tức thời xuất hiện.\n4. Payoff: Đạo hàm chính là độ dốc của tiếp tuyến tại đúng điểm đó, đo lường tốc độ thay đổi tức thời.\n5. Twist bắt buộc + Câu hỏi cuối tùy chọn: Xe chạy càng nhanh tiếp tuyến càng dốc, nhưng khi xe phanh gấp thì độ dốc đổi chiều âm hay dương? (Âm)\n6. Số hiện hình: Miệng nói khái niệm và mốc so sánh; Manim vẽ đồ thị s(t), cát tuyến xoay thành tiếp tuyến và công thức vi phân.",
   "audience": "Người xem phổ thông, không có kiến thức chuyên môn",
   "duration": "30–60 giây",
   "expression": "Hoạt họa + lời dẫn",
-  "style": "Một ý chính, một ví dụ trực quan, lời dẫn tự nhiên và liền mạch",
+  "style": "1. Đối tượng chính + chuyển động: Một điểm chạy trên đồ thị parabol s(t), cát tuyến xoay dần thành tiếp tuyến.\n2. Khi scale vỡ thì chuyển sang mốc so sánh nào: Phóng to cục bộ lân cận điểm tiếp xúc thành đoạn thẳng gần như phẳng.",
   "reference": "Chưa chọn tệp",
   "format": "landscape"
 }

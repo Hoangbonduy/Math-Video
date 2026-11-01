@@ -69,7 +69,24 @@ class FakeRouter(OpenRouterClient):
                 self.invalid_drafts -= 1
                 text = '{bad json'
             else:
-                text = json.dumps(valid_script(), ensure_ascii=False)
+                script = valid_script()
+                if 'narration' in payload['response_format']['json_schema']['schema']['properties']:
+                    script = dict(title=script['title'], main_idea=script['main_idea'], claims=script['claims'],
+                                  narration=' '.join(scene['narration'] for scene in script['scenes']))
+                else:
+                    # Keep the two-scene, 140-unit fixture used by downstream design tests,
+                    # with distinct sentences instead of the old repeated padding.
+                    sentences = [
+                        'Một chiếc xe có thể chạy nhanh dần dù quãng đường trước mắt vẫn ngắn và ta muốn biết ngay lúc này nó đang chuyển động nhanh tới mức nào để hiểu rõ tình huống hơn',
+                        'Nhưng lấy cả quãng đường chia cho toàn bộ thời gian chỉ cho biết tốc độ trung bình của hành trình nên kết quả đó chưa mô tả được đúng khoảnh khắc đang xét ở đây',
+                        'Rồi ta thu nhỏ khoảng thời gian quanh khoảnh khắc ấy và quan sát quãng đường tương ứng để thấy phép so sánh đang dần tiến tới một giá trị phản ánh chuyển động tức thời',
+                        'Vậy đạo hàm giúp diễn tả tốc độ thay đổi ngay tại một thời điểm qua giới hạn của những khoảng nhỏ dần và mở ra cách hiểu chuyển động bằng hình ảnh quen thuộc này',
+                    ]
+                    sentences = [' '.join(sentence.split()[:35]) + '.' for sentence in sentences]
+                    assert all(len(sentence.split()) == 35 for sentence in sentences)
+                    for index, scene in enumerate(script['scenes']):
+                        scene['narration'] = ' '.join(sentences[index*2:index*2+2])
+                text = json.dumps(script, ensure_ascii=False)
         usage = dict(prompt_tokens=100, completion_tokens=200, cost=0.0001)
         if 'tools' in payload:
             usage['server_tool_use_details'] = dict(web_search_requests=1, tool_calls_requested=1, tool_calls_executed=1)
