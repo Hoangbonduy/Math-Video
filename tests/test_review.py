@@ -58,6 +58,20 @@ class ReviewTests(WorkflowCase):
         self.error("REVIEW_CONFLICT", record_review, self.project, "script", "v001", "request_changes", feedback="Different decision")
         self.assertEqual(self.snapshots(), before)
 
+    def test_update_feedback_and_approve_changes_requested_scene(self):
+        self.reach("scene_design")
+        # Request changes on scene_02
+        req = record_review(self.project, "scene_design", "v001", "request_changes", scene_id="scene_02", feedback="Góp ý ban đầu")
+        self.assertEqual(req["status"], "needs_revision")
+        # User updates feedback before or after a failure/retry without REVIEW_CONFLICT
+        updated = record_review(self.project, "scene_design", "v001", "request_changes", scene_id="scene_02", feedback="Góp ý sửa đổi mới hơn")
+        review_item = next(r for r in updated["review_history"] if r["scene_id"] == "scene_02")
+        self.assertEqual(review_item["feedback"], "Góp ý sửa đổi mới hơn")
+        # User decides to approve despite errors / previous request_changes
+        record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_01")
+        approved = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_02")
+        self.assertEqual(approved["stage"], "scene_clip")
+
     def test_design_reviews_are_independent_and_gate_all_scenes(self):
         self.reach("scene_design")
         first = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_01")

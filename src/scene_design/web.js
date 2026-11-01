@@ -18,6 +18,10 @@ function stoppedScene() {
   return state.scene_ids.map(scene => sceneJob(scene)).filter(job => job?.status === 'failed')
     .sort((a,b) => (b.updated_at || '').localeCompare(a.updated_at || ''))[0] || null;
 }
+function sceneBatchFailure() {
+  const batch=workflowTasks.workflow;
+  return batch?.state==='failed' && !state.scene_ids.some(scene => sceneJob(scene)) ? batch : null;
+}
 function sceneRepairLabel(job) {
   const limit=job?.max_repairs ?? (job?.trial_mode ? 0 : 3);
   if(limit===0)return 'Ch\u1ea1y th\u1eed 1 l\u01b0\u1ee3t \u00b7 Kh\u00f4ng t\u1ef1 s\u1eeda';
@@ -30,7 +34,8 @@ function renderSceneProgress(artifact) {
   if(panel.hidden)return;
   const job=sceneJob(sid),task=sceneTask(sid);
   const running=task && ['queued','working'].includes(task.state);
-  const failed=!running && (task?.state==='failed' || job?.status==='failed');
+  const batchFailure=!job && sceneBatchFailure();
+  const failed=!running && (task?.state==='failed' || job?.status==='failed' || batchFailure);
   const draft=state.scene_drafts?.[sid];
   const rendered=artifact?.manim_render || state.design_previews?.[sid+':'+latest(sid,'scene_design')?.version] || draft?.reference;
   const ready=!running && !failed && rendered?.renderer==='manim';
@@ -38,13 +43,13 @@ function renderSceneProgress(artifact) {
   panel.setAttribute('aria-busy',String(Boolean(running)));
   if(running){const spinner=el('span',undefined,panel,'spinner');spinner.setAttribute('aria-hidden','true');}
   const body=el('div',undefined,panel,'scene-progress-body');
-  el('strong',running ? task.state==='queued'?'Đang xếp hàng':scenePhase(job) : failed?(rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
+  el('strong',running ? task.state==='queued'?'Đang xếp hàng':scenePhase(job) : failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
   const engine = job?.kind==='saved_design_render' ? 'Thiết kế Codex đã lưu · Dựng tại máy' : (job?.kind === 'manim_design_preview' || job?.preview_engine === 'json') ? 'Preview từ thiết kế · Chạy tại máy' : 'AI: '+(job?.model || state.scene_generation?.model || 'Đang đọc cấu hình');
   el('p','Cảnh '+String(state.scene_ids.indexOf(sid)+1).padStart(2,'0')+' · '+engine+' · Render: Manim / Cairo',body);
   if(job?.design_pipeline===2)el('p','Storyboard → thiết kế → render → đánh giá hình · '+sceneRepairLabel(job),body);
   if(running)el('small',job?.updated_at?'Cập nhật tiến trình: '+new Date(job.updated_at).toLocaleTimeString('vi-VN')+' · Trang tự kiểm tra mỗi 2 giây.':'Yêu cầu đã được tiếp nhận. Trang tự kiểm tra mỗi 2 giây.',body);
   else if(failed){
-    const error=job?.last_error || task?.error || 'Không hoàn tất tạo cảnh.';
+    const error=job?.last_error || task?.error || batchFailure?.error || 'Không hoàn tất tạo cảnh.';
     if(job?.quality_issues?.length){
       el('p',draft?.review?.summary || 'Bản nháp đã dựng nhưng chưa đạt các tiêu chí hình ảnh dưới đây.',body,'scene-error');
       const issues=el('ol',undefined,body,'scene-quality-issues');

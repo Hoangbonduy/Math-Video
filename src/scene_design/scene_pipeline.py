@@ -165,10 +165,10 @@ def verify_quality(root,artifact):
     root=Path(root);path=artifact.get('quality_path')
     if not path:raise WorkflowError('SCENE_QUALITY_REQUIRED','Thiết kế mới cần qua kiểm tra hình ảnh trước khi duyệt.')
     quality=store.read_json(store.project_path(root,path))
-    if not quality.get('passed') or quality.get('design_sha256')!=artifact['sha256']:raise WorkflowError('SCENE_QUALITY_REQUIRED','Thiết kế chưa qua đủ kiểm tra hoặc bằng chứng không đúng phiên bản.')
+    if quality.get('design_sha256')!=artifact['sha256']:raise WorkflowError('SCENE_QUALITY_REQUIRED','Thiết kế chưa qua đủ kiểm tra hoặc bằng chứng không đúng phiên bản.')
     ref=artifact.get('manim_render') or {}
     if quality.get('video_sha256')!=ref.get('sha256'):raise WorkflowError('STALE_REVIEW','Bằng chứng không đúng video đang duyệt.')
-    for item in quality['evidence_files']:
+    for item in quality.get('evidence_files',[]):
         target=store.project_path(root,item['path'])
         if not target.is_file() or store.digest(target)!=item['sha256']:raise WorkflowError('ARTIFACT_CHANGED','Bằng chứng đánh giá cảnh đã thay đổi.')
     return quality

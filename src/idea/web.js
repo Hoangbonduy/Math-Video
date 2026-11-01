@@ -42,21 +42,21 @@ function renderIdea() {
   field(content, 'Chủ đề / câu hỏi mở đầu', 'textarea', draft.topic ?? state.topic, 'topic').required = true;
   const goal = field(content, 'Ý tưởng kịch bản', 'textarea', draft.goal ?? context.script?.main_idea, 'goal');
   goal.className = 'tall';
-  goal.placeholder = 'Viết 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:\n1. Hook: điều nghe vô lý [1 câu]\n2. Xuất phát: chỉ 1 quy tắc / 1 con số gốc\n3. Leo: 2–3 mốc quen thuộc, tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…\n4. Payoff: trả lời đúng câu đã hỏi ở Hook\n5. Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.\n6. Số hiện hình: số nào miệng nói, số nào để Manim hiện trên màn hình.';
+  goal.placeholder = 'Viết 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:\n1. Hook: điều nghe vô lý [1 câu]\n2. Xuất phát: chỉ 1 quy tắc / 1 con số gốc\n3. Leo: 2–3 mốc quen thuộc tại Việt Nam (Landmark 81, Fansipan…), tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…\n4. Payoff: trả lời đúng câu đã hỏi ở Hook\n5. Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.\n6. Câu chốt: “Đăng ký kênh Axiora để biết thêm chi tiết.” (kèm ghi chú số hiện hình nếu cần).';
   const goalGuide = el('small', undefined, goal.parentElement, 'field-guide');
   el('span', 'Gồm đúng 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:', goalGuide);
   const goalList = el('ol', undefined, goalGuide);
   el('li', 'Hook: điều nghe vô lý [1 câu]', goalList);
   el('li', 'Xuất phát: chỉ 1 quy tắc / 1 con số gốc', goalList);
-  el('li', 'Leo: 2–3 mốc quen thuộc, tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…', goalList);
+  el('li', 'Leo: 2–3 mốc quen thuộc tại Việt Nam (Landmark 81, Fansipan…), tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…', goalList);
   el('li', 'Payoff: trả lời đúng câu đã hỏi ở Hook', goalList);
   el('li', 'Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.', goalList);
-  el('li', 'Số hiện hình: số nào miệng nói, số nào để Manim hiện trên màn hình.', goalList);
+  el('li', 'Câu chốt: “Đăng ký kênh Axiora để biết thêm chi tiết.” (kèm ghi chú số hiện hình nếu cần).', goalList);
   const row = el('div', undefined, content, 'field-row');
   field(row, 'Người xem', 'input', draft.audience ?? brief.audience, 'audience');
   const duration = field(row, 'Độ dài dự kiến', 'input', draft.duration ?? (brief.min_seconds ? brief.min_seconds + '–' + brief.max_seconds + ' giây' : '30–60 giây'), 'duration');
   duration.required = true; duration.placeholder = '30–60 giây';
-  el('small', 'Khoảng thời lượng trong 30–60 giây, ví dụ 30–45 giây.', duration.parentElement);
+  el('small', 'Thời lượng video trong 30–60 giây, gồm lời đọc và nhịp nghỉ xem hình Manim; ví dụ 30–45 giây.', duration.parentElement);
   const expression = field(content, 'Cách thể hiện', 'select', '', 'expression');
   for (const value of ['Hình minh họa + hoạt họa + đồ thị', 'Hoạt họa + lời dẫn', 'Đồ thị & mô hình toán']) { const option = el('option', value, expression); option.value = value; }
   expression.value = draft.expression || expression.options[0].value;

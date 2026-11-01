@@ -1,6 +1,7 @@
 """Persist the opening form and use it as the input of a new workflow cycle."""
 
 from src.shared.paths import PROJECT_ROOT
+from src.idea.guidelines import GOAL_MARKER
 import copy
 import re
 
@@ -41,7 +42,7 @@ def inputs(values):
     if not match:
         raise WorkflowError('INVALID_INPUT', 'Độ dài cần có dạng 30–60 giây.')
     requirements = '\n'.join(text for text in (
-        'Ý tưởng kịch bản (6 dòng):\n' + idea['goal'] if idea.get('goal') else '',
+        GOAL_MARKER + '\n' + idea['goal'] if idea.get('goal') else '',
         'Cách thể hiện: ' + idea['expression'] if idea.get('expression') else '',
         'Cách hiện bằng Manim (2 dòng):\n' + idea['style'] if idea.get('style') else '',
     ) if text)

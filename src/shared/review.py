@@ -66,10 +66,27 @@ def record_review(project_dir, stage, version, decision, *, scene_id=None, feedb
                 # cannot approve a replacement or advance the current stage.
                 workflow._verify(root, artifact)
                 return workflow._view(root, project, reviews)
-            raise WorkflowError("REVIEW_CONFLICT", "This version already has a different decision; submit a new version")
+            if stage == project["stage"] and workflow._latest(project, stage, scene_id) == artifact:
+                if request["decision"] == "request_changes" and decision == "request_changes":
+                    request.update(feedback=feedback, decided_at=workflow._now())
+                    reviews.setdefault("history", []).append(dict(
+                        stage=stage, version=version, scene_id=scene_id,
+                        status="changes_requested", decision="request_changes",
+                        feedback=feedback, decided_at=request["decided_at"]
+                    ))
+                    workflow._save(root, project, reviews)
+                    return workflow._view(root, project, reviews)
+                if request["decision"] == "request_changes" and decision == "approve":
+                    pass
+                else:
+                    raise WorkflowError("REVIEW_CONFLICT", "This version already has a different decision; submit a new version")
+            else:
+                raise WorkflowError("REVIEW_CONFLICT", "This version already has a different decision; submit a new version")
         if stage != project["stage"]:
             raise WorkflowError("WRONG_STAGE", f"Current stage is {project['stage']}, not {stage}")
-        if workflow._latest(project, stage, scene_id) != artifact or request["status"] != "pending":
+        if workflow._latest(project, stage, scene_id) != artifact:
+            raise WorkflowError("STALE_REVIEW", "Only the current pending version can receive a decision")
+        if request["status"] not in ("pending", "changes_requested"):
             raise WorkflowError("STALE_REVIEW", "Only the current pending version can receive a decision")
         workflow._prerequisites(root, project, reviews)
         workflow._verify(root, artifact)
