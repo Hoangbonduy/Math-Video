@@ -70,7 +70,7 @@ function renderMusic() {
     if(voiceDraft){if(!await action('av-settings',{config:voiceDraft}))return;voiceDraft=null;}
     if(await action('music-settings',{config:musicDraft})){
       musicDraft=null;
-      if(state.continuous_preview?.ready){previewMode='audio';await action('preview-build',{with_audio:true});}
+      if(state.continuous_preview?.ready){previewMode='audio';await action('preview-build',{with_audio:true,keep_duration:true});}
     }
   },'primary');
   apply.disabled=workflowBusy || state.stage==='completed';
@@ -116,7 +116,7 @@ function renderContinuousPreview() {
     if (config.provider==='fpt' && !config.allow_unpriced && (!config.vnd_per_million_chars || !config.vnd_per_usd)) {
       openVoiceSettings(); notice('Điền đơn giá FPT và tỷ giá, sau đó lưu cấu hình giọng trước khi thêm tiếng.', true); return;
     }
-    previewMode = 'audio'; await action('preview-build', {with_audio:true});
+    previewMode = 'audio'; await action('preview-build', {with_audio:true, keep_duration:true});
   }, 'primary');
   addVoice.disabled = !preview.ready || workflowBusy;
   const captionToggle = button(actions, subtitlesVisible ? 'Ẩn phụ đề' : 'Hiện phụ đề', () => {
@@ -173,7 +173,7 @@ function renderContinuousPreview() {
     downloadLink(links, 'Tải video MP4', item.path); downloadLink(links, 'Tải âm thanh WAV', item.audio_path); downloadLink(links, 'Tải lời đọc riêng', item.narration_path); downloadLink(links, 'Tải phụ đề SRT', item.subtitle_path);
     const report=el('a','Tải báo cáo kiểm tra',links);report.href='/api/diagnostics';report.download='bao-cao-kiem-tra.json';
     if (preview.audio && preview.silent) button(links, item.with_audio ? 'Xem bản không tiếng' : 'Xem bản có tiếng', () => { previewMode = item.with_audio ? 'silent' : 'audio'; render(); });
-    el('p', item.with_audio ? 'Phụ đề theo lời đọc. Hình giữ tốc độ gốc và dừng ở cuối từng nhịp để chờ lời đọc.' : 'Phụ đề đang chia theo thời lượng cảnh. Chọn Thêm tiếng để căn theo lời đọc.', parent, 'preview-help');
+    el('p', item.with_audio ? 'Phụ đề và lời đọc khớp theo thời lượng cảnh; hình giữ đúng thời lượng gốc.' : 'Phụ đề đang chia theo thời lượng cảnh. Chọn Thêm tiếng để căn theo lời đọc.', parent, 'preview-help');
   }
   const bottom = el('div', undefined, parent, 'actions preview-bottom');
   const build = button(bottom, item ? 'Ghép lại bản xem trước' : 'Ghép bản xem trước', () => { previewMode = 'silent'; return action('preview-build',{with_audio:false}); });

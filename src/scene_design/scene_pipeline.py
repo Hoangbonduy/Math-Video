@@ -52,7 +52,12 @@ def _story(session,context,index,previous,issues):
       'required_capabilities must enumerate the capabilities needed for the proposed motion. '
       'Prefer a simple plan with at most 3 beats and 8 total criteria. Use group timeline move for a vehicle, not a position binding on a group. '
       'Avoid camera zoom and complex dial mechanisms unless essential. The renderer rotates an object about its center, not an endpoint.')
-    result=_ask(session,f'v2_storyboard_{index}',instruction,dict(context,previous_storyboard=previous,issues=issues,renderer_capabilities=contract.CAPABILITIES,templates=contract.TEMPLATES),contract.STORY_SCHEMA)
+    if context.get('feedback'):
+        instruction += (' USER FEEDBACK TO FIX: The reviewer gave feedback: "'
+                        + str(context['feedback'])
+                        + '". You MUST revise the storyboard to directly fulfill and fix this feedback.')
+    prev_story = previous or context.get('previous_storyboard')
+    result=_ask(session,f'v2_storyboard_{index}',instruction,dict(context,previous_storyboard=prev_story,issues=issues,renderer_capabilities=contract.CAPABILITIES,templates=contract.TEMPLATES),contract.STORY_SCHEMA)
     return contract.validate_story(result,context['scene'],context['target_seconds'])
 
 
@@ -102,10 +107,15 @@ def _design(session,context,story,assets,index,previous,issues):
       '5. HIGHLIGHT MARGIN SAFETY: Text expands by 22% at highlight peak. Prefer static horizontal boxes within [0.04,0.94] '
       'and verify the full expanded/rotated/group-transformed box remains within [0,1] on both axes. '
       'Only declare overlap_with for visually intentional overlays, never to hide unreadable text.')
+    if context.get('feedback'):
+        instruction += (' USER FEEDBACK TO FIX: The reviewer requested changes: "'
+                        + str(context['feedback'])
+                        + '". You MUST modify and improve the scene design according to this feedback, building upon and preserving unaffected elements from the previous design.')
+    prev_design = previous or context.get('previous_design')
     schema=copy.deepcopy(contract.DESIGN_SCHEMA)
     schema['properties']['objects']['items']['properties']['asset_id']=dict(type='string',enum=['']+[a['asset_id'] for a in assets['assets']])
     if not assets['assets']:schema['properties']['objects']['items']['properties']['kind']['enum'].remove('image')
-    result=_ask(session,f'v2_design_{index}',instruction,dict(context,storyboard=story,available_assets=assets,previous_design=previous,issues=issues,templates=contract.TEMPLATES),schema)
+    result=_ask(session,f'v2_design_{index}',instruction,dict(context,storyboard=story,available_assets=assets,previous_design=prev_design,issues=issues,templates=contract.TEMPLATES),schema)
     if 'effective_graphs' in context:result['graphs']=copy.deepcopy(context['effective_graphs'])
     return result
 

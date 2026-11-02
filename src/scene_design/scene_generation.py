@@ -379,7 +379,36 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                         store.atomic_write(directory/'job.json',job)
                     index['jobs'].append(relative); store.atomic_write(root/BASE/'ledger.json',index)
                 context=dict(script=payload['script'],brief=payload['brief'],scene=scene,target_seconds=durations[target],config=config,feedback=feedback)
-                if stage=='scene_design' and base: context['previous_design']=store.read_json(root/base['path'])
+                if stage=='scene_design':
+                    from src.scene_design.scene_drafts import current as current_drafts
+                    drafts=current_drafts(root)
+                    latest_design=None
+                    latest_storyboard=None
+                    if target in drafts:
+                        d=drafts[target]
+                        dp=store.project_path(root,d['design_path']) if d.get('design_path') else None
+                        sp=store.project_path(root,d['storyboard_path']) if d.get('storyboard_path') else None
+                        if dp and dp.exists():
+                            try: latest_design=store.read_json(dp)
+                            except Exception: pass
+                        if sp and sp.exists():
+                            try: latest_storyboard=store.read_json(sp)
+                            except Exception: pass
+                    if latest_design is None and base:
+                        try: latest_design=store.read_json(root/base['path'])
+                        except Exception: pass
+                    if latest_storyboard is None and base:
+                        sb_path=base.get('storyboard_path')
+                        if sb_path and store.project_path(root,sb_path).exists():
+                            try: latest_storyboard=store.read_json(store.project_path(root,sb_path))
+                            except Exception: pass
+                        elif 'storyboard.json' in base.get('bundle',{}):
+                            sb_path=store.project_path(root,base['bundle']['storyboard.json']['path'])
+                            if sb_path.exists():
+                                try: latest_storyboard=store.read_json(sb_path)
+                                except Exception: pass
+                    if latest_design: context['previous_design']=latest_design
+                    if latest_storyboard: context['previous_storyboard']=latest_storyboard
                 if design:
                     wf._verify(root,design)
                     context['approved_design']=store.read_json(root/design['path'])

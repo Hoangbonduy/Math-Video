@@ -20,7 +20,7 @@ SYNTHESIZER = audio.synthesize
 FPS = 30
 
 
-def snapshot(root, project, reviews, with_audio=False):
+def snapshot(root, project, reviews, with_audio=False, keep_duration=True):
     script = wf._latest(project, 'script', None)
     if not script or wf._request(reviews, script)['status'] != 'approved':
         raise WorkflowError('PREVIEW_INPUT', 'Duyệt kịch bản trước khi xem bản dựng.')
@@ -50,14 +50,15 @@ def snapshot(root, project, reviews, with_audio=False):
     if not sources:
         raise WorkflowError('PREVIEW_INPUT', 'Chưa có cảnh để ghép.')
     voice = {key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if with_audio else None
-    return dict(script=copy.deepcopy(script), scenes=sources, voice=voice)
+    return dict(script=copy.deepcopy(script), scenes=sources, voice=voice, keep_duration=keep_duration)
 
 
 def fingerprint(inputs):
     # UI action revisions and review decisions do not change preview media.
     ref = lambda a: dict(version=a['version'], sha256=a['sha256'], path=a['path'])
     identity = dict(script=ref(inputs['script']), scenes=[dict(scene_id=s['scene_id'],
-                    design=ref(s['design']), clip=ref(s['clip']), storyboard=s.get('storyboard')) for s in inputs['scenes']], voice=inputs['voice'], format_version=3)
+                    design=ref(s['design']), clip=ref(s['clip']), storyboard=s.get('storyboard')) for s in inputs['scenes']],
+                    voice=inputs['voice'], keep_duration=inputs.get('keep_duration', True), format_version=4)
     return hashlib.sha256(_json_bytes(identity)).hexdigest()
 
 
@@ -81,11 +82,13 @@ def _base_status(root, project=None):
     path = root / BASE / 'index.json'
     index = store.read_json(path) if path.exists() else {}
     for mode in ('silent', 'audio'):
-        current = dict(inputs, voice={key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if mode == 'audio' else None)
         item = index.get(mode)
-        if item and item.get('fingerprint') == fingerprint(current):
-            if all(store.project_path(root, item[key]).is_file() for key in ('path', 'subtitle_path')):
-                result[mode] = item
+        if item:
+            kd = item.get('keep_duration', True)
+            current = dict(inputs, voice={key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if mode == 'audio' else None, keep_duration=kd)
+            if item.get('fingerprint') == fingerprint(current):
+                if all(store.project_path(root, item[key]).is_file() for key in ('path', 'subtitle_path')):
+                    result[mode] = item
     return result
 
 
@@ -119,19 +122,21 @@ def _encode(source, output, seconds, resolution, speech=None, beats=None):
         raise WorkflowError('PREVIEW_TIMING', 'Encoded picture does not match the planned frame count.')
 
 
-def _generate_base(project_dir, with_audio=False):
+def _generate_base(project_dir, with_audio=False, keep_duration=True):
     if type(with_audio) is not bool:
         raise WorkflowError('INVALID_INPUT', 'with_audio phải là boolean.')
+    if type(keep_duration) is not bool:
+        raise WorkflowError('INVALID_INPUT', 'keep_duration phải là boolean.')
     root = Path(project_dir).resolve()
     mode = 'audio' if with_audio else 'silent'
     with _job_lock(root):
         with store.locked_project(root):
             project, reviews = wf._load(root)
-            inputs = snapshot(root, project, reviews, with_audio)
+            inputs = snapshot(root, project, reviews, with_audio, keep_duration=keep_duration)
             for item in [inputs['script']] + [a for s in inputs['scenes'] for a in (s['design'], s['clip'])]:
                 wf._verify(root, item)
             cached = _base_status(root, project).get(mode)
-            if cached:
+            if cached and cached.get('keep_duration', True) == keep_duration:
                 if store.digest(root / cached['path']) != cached['sha256'] or store.digest(root / cached['subtitle_path']) != cached['subtitle_sha256']:
                     raise WorkflowError('CACHE_CORRUPT', 'Bản xem trước đã bị thay đổi. Kiểm tra tệp trên máy.')
                 return cached
@@ -159,7 +164,18 @@ def _generate_base(project_dir, with_audio=False):
             # Motion uses the original timeline; only explicit beat holds add time.
             seconds = math.ceil(_seconds(source_path) * FPS - 1e-4) / FPS
             speech, beats = None, None
-            if with_audio:
+            if with_audio and keep_duration:
+                total = sum(len(t.split()) for t in phrases)
+                segments, local = [], 0.0
+                for phrase in phrases:
+                    ref = SYNTHESIZER(root, phrase, config)
+                    end = local + seconds * len(phrase.split()) / total
+                    segments.append(dict(text=phrase, start=local, end=end, audio=ref))
+                    local = end
+                speech = directory / f'scene_{index:03}.wav'
+                pacing.speech_track(root, segments, speech, seconds, fit_to_cue=True)
+                beats = None
+            elif with_audio:
                 segments = []
                 for phrase in phrases:
                     ref = SYNTHESIZER(root, phrase, config)
@@ -203,7 +219,7 @@ def _generate_base(project_dir, with_audio=False):
             temporary.unlink(missing_ok=True)
         result = dict(path=str(output.relative_to(root)), sha256=store.digest(output),
                       subtitle_path=str(captions.relative_to(root)), subtitle_sha256=store.digest(captions),
-                      fingerprint=key, with_audio=with_audio, draft=any(s.get('draft') for s in inputs['scenes']), duration=offset, scenes=scenes, cues=cues,
+                      fingerprint=key, with_audio=with_audio, keep_duration=keep_duration, draft=any(s.get('draft') for s in inputs['scenes']), duration=offset, scenes=scenes, cues=cues,
                       caption_timing='speech_phrases' if with_audio else 'estimated', resolution=list(resolution))
         if with_audio:
             narration_wav=directory/'narration.wav'
@@ -211,7 +227,7 @@ def _generate_base(project_dir, with_audio=False):
             result.update(narration_path=str(narration_wav.relative_to(root)),narration_sha256=store.digest(narration_wav))
         with store.locked_project(root):
             project, reviews = wf._load(root)
-            if fingerprint(snapshot(root, project, reviews, with_audio)) != key:
+            if fingerprint(snapshot(root, project, reviews, with_audio, keep_duration=keep_duration)) != key:
                 raise WorkflowError('STALE_JOB', 'Kịch bản, cảnh hoặc giọng đọc đã đổi. Hãy dựng lại bản xem trước.')
             path = root / BASE / 'index.json'
             index = store.read_json(path) if path.exists() else {}
@@ -241,22 +257,22 @@ def status(root, project=None):
     return result
 
 
-def generate(project_dir, with_audio=False):
+def generate(project_dir, with_audio=False, keep_duration=True):
     from src.preview import music
     root = Path(project_dir).resolve()
-    base = _generate_base(root, with_audio)
+    base = _generate_base(root, with_audio, keep_duration=keep_duration)
     if not with_audio:
         return base
     with _job_lock(root):
         with store.locked_project(root):
             project, reviews = wf._load(root)
-            if fingerprint(snapshot(root,project,reviews,True)) != base['fingerprint']:
+            if fingerprint(snapshot(root,project,reviews,True,keep_duration=keep_duration)) != base['fingerprint']:
                 raise WorkflowError('STALE_JOB','Giọng hoặc cảnh đã đổi; hãy dựng lại bản có tiếng.')
             selection = music.snapshot(root, project)
         result = music.apply(root, base, selection)
         with store.locked_project(root):
             project, reviews = wf._load(root)
-            if music.snapshot(root,project) != selection or fingerprint(snapshot(root,project,reviews,True)) != base['fingerprint']:
+            if music.snapshot(root,project) != selection or fingerprint(snapshot(root,project,reviews,True,keep_duration=keep_duration)) != base['fingerprint']:
                 raise WorkflowError('STALE_JOB','Cấu hình đã đổi trong khi phối nhạc.')
             store.atomic_write(root/BASE/'mix_index.json', result)
         return result

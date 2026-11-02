@@ -77,13 +77,25 @@ def plan(root, source, phrases, segments, seconds, fps):
     return result
 
 
-def speech_track(root, segments, output, seconds):
-    """Place cached speech unchanged; silence fills any waits for the picture."""
+def speech_track(root, segments, output, seconds, fit_to_cue=False):
+    """Place speech aligned to subtitle cues; adjust speed to fit cue window if fit_to_cue is set."""
     args, filters = [binary('ffmpeg'), '-y', '-v', 'error'], []
     for index, segment in enumerate(segments):
         args += ['-i', str(store.project_path(root, segment['audio']['path']))]
+        slot = segment.get('end', 0) - segment.get('start', 0)
+        dur = segment.get('audio', {}).get('duration', 0)
+        tempo_str = ''
+        if fit_to_cue and slot > 0 and dur > slot + 0.02:
+            tempo = dur / max(0.1, slot - 0.04)
+            t_chain = []
+            t = tempo
+            while t > 2.0:
+                t_chain.append('atempo=2.0')
+                t /= 2.0
+            t_chain.append(f'atempo={t:.4f}')
+            tempo_str = ','.join(t_chain) + ','
         delay = round(segment['start'] * 48000)
-        filters.append(f'[{index}:a]aresample=48000,asetpts=PTS-STARTPTS,adelay={delay}S:all=1[a{index}]')
+        filters.append(f'[{index}:a]{tempo_str}aresample=48000,asetpts=PTS-STARTPTS,adelay={delay}S:all=1[a{index}]')
     inputs = ''.join(f'[a{i}]' for i in range(len(segments)))
     filters.append(inputs + f'amix=inputs={len(segments)}:normalize=0:dropout_transition=0,'
                    f'apad,atrim=end_sample={round(seconds * 48000)}[speech]')

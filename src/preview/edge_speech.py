@@ -10,7 +10,21 @@ from src.shared.media_tools import binary,run,duration
 async def _download(text,voice,rate,path,boundary='WordBoundary'):
     try:import edge_tts
     except ImportError:raise WorkflowError('TTS_CONFIGURATION','Cài edge-tts trong môi trường Python chạy app.') from None
-    await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=boundary,connect_timeout=15,receive_timeout=45).save(str(path))
+    try:
+        await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=boundary,connect_timeout=15,receive_timeout=45).save(str(path))
+        return
+    except Exception as exc:
+        if type(exc).__name__!='NoAudioReceived':raise
+    alt='SentenceBoundary' if boundary=='WordBoundary' else 'WordBoundary'
+    path.unlink(missing_ok=True)
+    try:
+        await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=alt,connect_timeout=15,receive_timeout=45).save(str(path))
+        return
+    except Exception as exc:
+        if type(exc).__name__!='NoAudioReceived':raise
+    await asyncio.sleep(1.5)
+    path.unlink(missing_ok=True)
+    await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=alt,connect_timeout=15,receive_timeout=45).save(str(path))
 
 
 def _failure(exc):
@@ -70,8 +84,8 @@ def synthesize(root,text,config,retry_uncertain=None):
     if previous and previous['status'] in ('in_flight','uncertain') and retry_uncertain!=previous['id']:
         raise WorkflowError('TTS_RESULT_UNKNOWN','Lượt giọng Microsoft chưa rõ kết quả. Chọn tiếp tục lượt đó trước khi gửi lại.')
     recent=max((c.get('completed_epoch') or c.get('started_epoch',0) for c in ledger.get('calls',[]) if c.get('provider')=='edge'),default=0)
-    wait=max(0.0,recent+1.2-time.time())
-    if 0<wait<=2.0:time.sleep(wait)
+    wait=max(0.0,recent+1.5-time.time())
+    if wait>0:time.sleep(min(wait,3.0))
     call=dict(id=uuid.uuid4().hex,key=key,provider='edge',status='in_flight',started_epoch=time.time(),characters=len(text),text=text,voice=config['voice'],speed=config['speed'],reserved_usd=None,cost_status='no_api_key',price=None,exchange_rate=None)
     ledger['calls'].append(call);store.atomic_write(ledger_path,ledger)
     mp3=directory/(key+'.download.mp3');temporary=directory/(key+'.partial.wav')

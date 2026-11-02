@@ -63,6 +63,15 @@ function renderSceneProgress(artifact) {
       el('pre',error+'\n\n'+JSON.stringify(job.quality_issues,null,2),details);
     }else el('p',error.length>900?error.slice(0,900)+'…':error,body,'scene-error');
     if(draft?.review?.criteria_total)el('p',draft.review.criteria_passed+'/'+draft.review.criteria_total+' tiêu chí storyboard đạt'+(job?.quality_issues?.length?' · Còn '+job.quality_issues.length+' lỗi cần sửa':'')+' · Bản nháp vẫn xem được bên dưới.',body);
+    const progressActions=el('div',undefined,body,'actions');
+    if(artifact && ['pending','changes_requested'].includes(reviewFor(artifact)?.status)){
+      button(progressActions,artifact.stage==='scene_design'?'Duyệt thiết kế':'Duyệt bản dựng',()=>action('approve',{stage:artifact.stage,scene_id:sid,version:artifact.version,sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid+':'+artifact.version]?.sha256 || artifact.manim_render?.sha256}),'primary');
+    }
+    button(progressActions,'Góp ý sửa thiết kế',focusFeedback,'text-button');
+  }
+  if(artifact && ['pending','changes_requested'].includes(reviewFor(artifact)?.status) && !$('controls').querySelector('.ctrl-approve-button')){
+    const btn = button($('controls'),artifact.stage==='scene_design'?'Duyệt thiết kế':'Duyệt bản dựng',()=>action('approve',{stage:artifact.stage,scene_id:sid,version:artifact.version,sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid+':'+artifact.version]?.sha256 || artifact.manim_render?.sha256}),'primary ctrl-approve-button');
+    btn.disabled = workflowBusy;
   }
   else if(ready && draft?.review?.status==='not_run')el('p','Dựng từ thiết kế đã lưu · Chưa đánh giá lại bằng AI · Không gọi thêm Codex.',body);
   else if(!ready){
@@ -119,12 +128,13 @@ function renderViewer(artifact) {
   const viewer = $('viewer');
   const heading = el('div', undefined, viewer, 'viewer-heading');
   el('span', 'Cảnh ' + String(state.scene_ids.indexOf(sid) + 1).padStart(2, '0') + ' · ' + shortTitle(sid), heading);
-  const draft=!artifact ? state.scene_drafts?.[sid] : null;
+  const isFailedRun = sceneJob(sid)?.status === 'failed';
+  const draft = (!artifact || (isFailedRun && state.scene_drafts?.[sid])) ? state.scene_drafts?.[sid] : null;
   const reference = draft?.reference || (artifact?.stage === 'scene_design' && (state.design_previews?.[sid + ':' + artifact.version] || artifact.manim_render));
   const motion = reference?.renderer === 'manim' ? reference : null;
   const isClip = ['scene_clip','scene_av'].includes(artifact?.stage) || Boolean(motion);
   const playPath = motion?.path || artifact?.path;
-  el('span', draft ? 'Bản nháp · Chưa duyệt' : motion ? 'Video thiết kế · Manim Cairo' : isClip ? label(artifact.stage) + ' · ' + artifact.version : artifact ? 'Thiết kế cũ · Chưa render Manim' : 'Chưa có video Manim', heading, 'viewer-kind');
+  el('span', draft ? (isFailedRun ? 'Bản nháp · Cần chỉnh sửa' : 'Bản nháp · Chưa duyệt') : motion ? 'Video thiết kế · Manim Cairo' : isClip ? label(artifact.stage) + ' · ' + artifact.version : artifact ? 'Thiết kế cũ · Chưa render Manim' : 'Chưa có video Manim', heading, 'viewer-kind');
   const canvas = el('div', undefined, viewer, 'scene-canvas');
   canvas.classList.toggle('portrait', state.idea?.format === 'portrait');
   let video;
@@ -230,14 +240,14 @@ function renderFeedback(artifact, artifacts) {
         const submitted = await action('feedback', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256, feedback:text.value, time_seconds:time?.value ? Number(time.value) : null});
         if (submitted) feedbackDrafts.delete(key);
       });
-      if (review?.status === 'pending') button(actions, artifact.stage === 'scene_design' ? 'Duyệt thiết kế' : 'Duyệt bản dựng', () => action('approve', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid + ':' + artifact.version]?.sha256}), 'primary');
+      if (['pending', 'changes_requested'].includes(review?.status)) button(actions, artifact.stage === 'scene_design' ? 'Duyệt thiết kế' : 'Duyệt bản dựng', () => action('approve', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid + ':' + artifact.version]?.sha256 || artifact.manim_render?.sha256}), 'primary');
       el('small', state.ai_backend === 'codex' ? 'Góp ý dùng hạn mức Codex để tạo bản mới. Thiết kế thay đổi sẽ cần bạn duyệt trước khi dựng.' : 'Góp ý dùng ngân sách dự án để tạo bản mới. Thiết kế thay đổi sẽ cần bạn duyệt trước khi dựng.', parent, 'feedback-help');
     } else if (designLocked) {
       el('p', 'Thiết kế này đã được chốt. Để yêu cầu thay đổi, hãy góp ý trên bản dựng của cảnh.', parent, 'feedback-help');
       button(parent, 'Xem bản dựng →', () => { userHistory = false; selection = null; navigate('preview'); });
     } else if (active) {
       el('p', 'Đang có vòng sửa: ' + label(active.status) + '. Xem tiến độ và thao tác tiếp ở bên dưới.', parent, 'feedback-help');
-      if (review?.status === 'pending' && active.clips[sid]?.version === artifact.version) button(el('div', undefined, parent, 'actions'), 'Duyệt bản dựng', () => action('approve', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256}), 'primary');
+      if (['pending', 'changes_requested'].includes(review?.status) && active.clips[sid]?.version === artifact.version) button(el('div', undefined, parent, 'actions'), 'Duyệt bản dựng', () => action('approve', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256}), 'primary');
     }
   }
   if (currentPage === 'preview') {

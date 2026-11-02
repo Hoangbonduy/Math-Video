@@ -74,8 +74,8 @@ class PreviewTests(unittest.TestCase):
 
     def test_audio_phrases_duration_cache_and_invalidation(self):
         with patch('src.preview.continuous_preview.SYNTHESIZER',side_effect=fake_speech) as synth:
-            item=preview.generate(self.root,True);count=synth.call_count
-            preview.generate(self.root,True);self.assertEqual(synth.call_count,count)
+            item=preview.generate(self.root,True,keep_duration=False);count=synth.call_count
+            preview.generate(self.root,True,keep_duration=False);self.assertEqual(synth.call_count,count)
         silent=preview.generate(self.root)
         self.assertGreater(item['duration'],silent['duration'])
         self.assertTrue(all(s['hold_seconds']>0 for s in item['scenes']))
@@ -93,6 +93,23 @@ class PreviewTests(unittest.TestCase):
         with store.locked_project(self.root):
             p,r=wf._load(self.root);a=wf._latest(p,'scene_design','first');a['sha256']='f'*64;wf._save(self.root,p,r)
         with self.assertRaisesRegex(store.WorkflowError,'ARTIFACT_CHANGED'):preview.generate(self.root)
+
+    def test_audio_keep_duration_fits_speech_to_subtitles_without_extending_video(self):
+        silent = preview.generate(self.root)
+        with patch('src.preview.continuous_preview.SYNTHESIZER', side_effect=fake_speech) as synth:
+            item = preview.generate(self.root, True, keep_duration=True)
+            self.assertEqual(synth.call_count, 4)
+        self.assertAlmostEqual(item['duration'], silent['duration'], places=2)
+        self.assertFalse(any('hold_seconds' in s for s in item['scenes']))
+        self.assertEqual(len(item['cues']), len(silent['cues']))
+        for c_audio, c_silent in zip(item['cues'], silent['cues']):
+            self.assertAlmostEqual(c_audio['start'], c_silent['start'], places=2)
+            self.assertAlmostEqual(c_audio['end'], c_silent['end'], places=2)
+            self.assertEqual(c_audio['text'], c_silent['text'])
+        info = probe(self.root / item['path'])
+        sound = next(s for s in info['streams'] if s['codec_type'] == 'audio')
+        video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+        self.assertLess(abs(float(sound['duration']) - float(video['duration'])), 0.05)
 
     def test_speech_stays_unchanged_across_picture_waits(self):
         import numpy as np

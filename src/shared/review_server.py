@@ -316,8 +316,10 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/preview-build':
                 from src.preview.continuous_preview import generate
                 with_audio=data.get('with_audio',False)
+                keep_duration=data.get('keep_duration',True)
                 if type(with_audio) is not bool: raise WorkflowError('INVALID_INPUT','with_audio phải là boolean')
-                self.server.enqueue('continuous-preview',lambda:generate(root,with_audio=with_audio))
+                if type(keep_duration) is not bool: raise WorkflowError('INVALID_INPUT','keep_duration phải là boolean')
+                self.server.enqueue('continuous-preview',lambda:generate(root,with_audio=with_audio,keep_duration=keep_duration))
             elif self.path=='/api/music-settings':
                 from src.preview.music import configure
                 configure(root,data['config'])
