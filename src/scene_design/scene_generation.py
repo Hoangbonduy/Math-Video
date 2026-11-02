@@ -174,7 +174,7 @@ def _legacy_design(root,directory,session,context):
         'Every object, including images, MUST have a six-digit hex color such as #F2F6FC or #56DFC5; never empty or a named color. '
         'Use the supplied config.foreground and config.accent for a consistent palette. '
         'kind is text/rectangle/circle/line/plot, or image ONLY when available_assets.assets contains a licensed asset. '
-        'If there are no available assets, DO NOT emit any image object. Draw a car with a body rectangle and wheel circles, not kind=image with an empty asset_id. '
+        'If there are no available assets, DO NOT emit any image object. Compose illustrations from supported vector primitives (rectangle, circle, line, plot) and keep numeric readout labels in a dedicated region outside all motion paths. '
         'For a real image, asset_id must exactly match an available asset ID; for every vector/text object asset_id is empty. '
         'A text object MUST have a nonempty visible label. Do not emit placeholder text objects with label="". '
         'Unused labels on non-text objects are empty strings, points is [] unless plot. '
@@ -183,7 +183,7 @@ def _legacy_design(root,directory,session,context):
         'math is always present: use [] if no datasets; otherwise sampled expressions using only arithmetic and sin/cos/tan/sqrt/exp/log/fabs, count 2..200. '
         'Use vector graphics and explain fallback_note if an essential image is unavailable. '
         'Every object must fit: width/2 <= x <= 1-width/2, height/2 <= y <= 1-height/2. '
-        'Keep text labels clear of moving shapes over their FULL motion paths; reserve a separate area for a speedometer readout rather than placing it on the path of the car. '
+        'Keep text labels clear of moving shapes over their FULL motion paths. '
         'Avoid crowded text. Objects and mathematical data are the complete contract for code generation.')
     schema=design_schema(assets['assets'])
     messages=_messages(instruction,context)
@@ -378,7 +378,16 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                         job=dict(job_id=job_id,input=fingerprint,status='planned',calls=[],created_at=_now(),last_error=None)
                         store.atomic_write(directory/'job.json',job)
                     index['jobs'].append(relative); store.atomic_write(root/BASE/'ledger.json',index)
-                context=dict(script=payload['script'],brief=payload['brief'],scene=scene,target_seconds=durations[target],config=config,feedback=feedback)
+                is_opening_scene = (target == project['scene_ids'][0])
+                context = dict(
+                    script=payload['script'],
+                    brief=payload['brief'],
+                    scene=scene,
+                    target_seconds=durations[target],
+                    config=config,
+                    feedback=feedback,
+                    is_opening_scene=is_opening_scene
+                )
                 if stage=='scene_design':
                     from src.scene_design.scene_drafts import current as current_drafts
                     drafts=current_drafts(root)

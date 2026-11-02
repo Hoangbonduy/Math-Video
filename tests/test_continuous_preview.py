@@ -72,6 +72,29 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(before,[(self.root/name).read_bytes() for name in ('project.json','reviews.json')])
         text=(self.root/item['subtitle_path']).read_text();self.assertIn('Xin chào',text);self.assertIn('Cảm ơn',text)
 
+    def test_cleared_preview_stays_empty_until_manual_build(self):
+        index = self.root / preview.BASE / 'index.json'
+        index.parent.mkdir(parents=True, exist_ok=True)
+        store.atomic_write(index, dict(cleared=True))
+        state = preview.status(self.root)
+        self.assertTrue(state['ready'])
+        self.assertFalse(state['auto_build'])
+        self.assertIsNone(state['silent'])
+        self.assertIsNone(state['audio'])
+        self.assertEqual(state['pacing_version'], pacing.VERSION)
+        item = preview.generate(self.root)
+        self.assertEqual(item['pacing_version'], pacing.VERSION)
+        self.assertTrue(preview.status(self.root)['auto_build'])
+        self.assertNotIn('cleared', store.read_json(index))
+
+    def test_previous_pacing_metadata_is_not_reused(self):
+        item = preview.generate(self.root)
+        index = self.root / preview.BASE / 'index.json'
+        old = dict(item, pacing_version=pacing.VERSION-1)
+        store.atomic_write(index, dict(silent=old))
+        self.assertIsNone(preview.status(self.root)['silent'])
+        self.assertEqual(preview.generate(self.root)['pacing_version'], pacing.VERSION)
+
     def test_audio_phrases_duration_cache_and_invalidation(self):
         with patch('src.preview.continuous_preview.SYNTHESIZER',side_effect=fake_speech) as synth:
             item=preview.generate(self.root,True,keep_duration=False);count=synth.call_count
@@ -94,18 +117,18 @@ class PreviewTests(unittest.TestCase):
             p,r=wf._load(self.root);a=wf._latest(p,'scene_design','first');a['sha256']='f'*64;wf._save(self.root,p,r)
         with self.assertRaisesRegex(store.WorkflowError,'ARTIFACT_CHANGED'):preview.generate(self.root)
 
-    def test_audio_keep_duration_fits_speech_to_subtitles_without_extending_video(self):
+    def test_legacy_keep_duration_cannot_compress_speech(self):
         silent = preview.generate(self.root)
         with patch('src.preview.continuous_preview.SYNTHESIZER', side_effect=fake_speech) as synth:
             item = preview.generate(self.root, True, keep_duration=True)
             self.assertEqual(synth.call_count, 4)
-        self.assertAlmostEqual(item['duration'], silent['duration'], places=2)
-        self.assertFalse(any('hold_seconds' in s for s in item['scenes']))
-        self.assertEqual(len(item['cues']), len(silent['cues']))
-        for c_audio, c_silent in zip(item['cues'], silent['cues']):
-            self.assertAlmostEqual(c_audio['start'], c_silent['start'], places=2)
-            self.assertAlmostEqual(c_audio['end'], c_silent['end'], places=2)
-            self.assertEqual(c_audio['text'], c_silent['text'])
+            self.assertEqual(preview.generate(self.root, True, keep_duration=False), item)
+            self.assertEqual(synth.call_count, 4)
+        self.assertFalse(item['keep_duration'])
+        self.assertGreater(item['duration'], silent['duration'])
+        self.assertTrue(all(abs(c['end']-c['start']-.6)<1e-6 for c in item['cues']))
+        for left, right in zip(item['cues'], item['cues'][1:]):
+            self.assertGreaterEqual(right['start']-left['end'], .21)
         info = probe(self.root / item['path'])
         sound = next(s for s in info['streams'] if s['codec_type'] == 'audio')
         video = next(s for s in info['streams'] if s['codec_type'] == 'video')
@@ -154,20 +177,20 @@ class PreviewTests(unittest.TestCase):
         segments=[dict(text=text,audio=dict(fake_speech(self.root,text,{}),duration=.8)) for text in ['First.','Second.']]
         beats=pacing.plan(self.root,dict(clip=dict(path=source.name),storyboard=dict(path=story.name,sha256=store.digest(story))),
                           ['First.','Second.'],segments,1,30)
-        self.assertEqual([b['hold_frames'] for b in beats],[14,14])
-        self.assertAlmostEqual(segments[1]['start'],29/30)
+        self.assertEqual([b['hold_frames'] for b in beats],[21,14])
+        self.assertAlmostEqual(segments[1]['start'],36/30)
         silent,voiced=self.root/'silent.mp4',self.root/'holds.mp4'
         preview._encode(source,silent,1,(320,180))
-        preview._encode(source,voiced,58/30,(320,180),beats=beats)
+        preview._encode(source,voiced,65/30,(320,180),beats=beats)
         def frames(path):
             with av.open(str(path)) as container:
                 return [frame.to_ndarray(format='gray').astype(np.int16) for frame in container.decode(video=0)]
         native,actual=frames(silent),frames(voiced)
-        expected=native[:15]+[native[14]]*14+native[15:]+[native[-1]]*14
+        expected=native[:15]+[native[14]]*21+native[15:]+[native[-1]]*14
         self.assertEqual(len(actual),len(expected))
         self.assertEqual(len(native),30)
         self.assertLess(max(np.abs(a-b).mean() for a,b in zip(actual,expected)),1.5)
-        self.assertGreater(np.abs(actual[14]-actual[29]).mean(),1)
+        self.assertGreater(np.abs(actual[14]-actual[36]).mean(),1)
 
     def test_storyboard_changes_invalidate_preview_cache(self):
         project,reviews=wf._load(self.root)

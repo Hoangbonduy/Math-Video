@@ -38,17 +38,29 @@ def validate_settings(config):
     if config['budget_usd']!=.5: raise WorkflowError('INVALID_INPUT','C7 budget is fixed at 0.50 USD')
 
 
+def processing_version(config):
+    if config['provider'] == 'edge':
+        from src.preview.edge_speech import TRIM_VERSION
+        return TRIM_VERSION
+    return None
+
+
 def chunks(text):
-    """Lossless display spans, protecting unit/formula tokens; short TTS phrases."""
-    result=[]; start=0
-    # Sentence/clause boundaries, then whitespace when a clause is long.
-    for match in re.finditer(r'.+?(?:[.!?;,:](?=\s|$)|$)',text,re.S):
+    """Lossless display spans, protecting unit/formula tokens; whole sentences when <=68 chars."""
+    result=[]
+    # Chỉ ngắt ở dấu kết thúc câu; giữ nguyên dấu phẩy/chấm phẩy nếu câu đủ gọn
+    for match in re.finditer(r'.+?(?:[.!?…](?=\s|$)|$)',text,re.S):
         value=match.group().strip()
         if not value: continue
-        while len(value)>84:
-            stops=[m.start() for m in re.finditer(r'\s+',value[:85]) if m.start()>30 and not re.search(r'\d$',value[:m.start()])]
-            if not stops: break
-            cut=stops[-1];result.append(value[:cut].strip());value=value[cut:].strip()
+        while len(value)>68:
+            punct=[m.end() for m in re.finditer(r'[,;:](?=\s)',value[:69]) if m.end()>20]
+            if punct:
+                cut=punct[-1]
+            else:
+                stops=[m.start() for m in re.finditer(r'\s+',value[:69]) if m.start()>25 and not re.search(r'\d$',value[:m.start()])]
+                if not stops: break
+                cut=stops[-1]
+            result.append(value[:cut].strip());value=value[cut:].strip()
         if value: result.append(value)
     if not result and text.strip(): result=[text.strip()]
     merged=[]
@@ -93,7 +105,7 @@ def synthesize(root,text,config=None,retry_uncertain=None,*,_rate_retries=0):
     if config['provider']=='edge':
         from src.preview.edge_speech import synthesize as edge_synthesize
         return edge_synthesize(root,text,config,retry_uncertain)
-    key=hashlib.sha256(_json_bytes(dict(text=text,voice=config['voice'],speed=config['speed'],provider='fpt',format='wav'))).hexdigest()
+    key=hashlib.sha256(_json_bytes(dict(text=text,voice=config['voice'],speed=config['speed'],provider='fpt',format='wav',trim=1))).hexdigest()
     ledger=init_ledger(root)
     directory=root/'generation/checkpoint_7'
     output=directory/(key+'.wav');meta=directory/(key+'.json');ledger_path=directory/'ledger.json'
@@ -159,7 +171,8 @@ def synthesize(root,text,config=None,retry_uncertain=None,*,_rate_retries=0):
     for attempt in range(18):
         try:
             temporary.write_bytes(_download(call['url']))
-            run([binary('ffmpeg'),'-y','-v','error','-i',str(temporary),'-ar','48000','-ac','1',str(output)])
+            trim_filter='silenceremove=start_periods=1:start_silence=0.02:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_silence=0.04:start_threshold=-45dB,areverse'
+            run([binary('ffmpeg'),'-y','-v','error','-i',str(temporary),'-af',trim_filter,'-ar','48000','-ac','1',str(output)])
             seconds=duration(output)
             if seconds<=0: raise WorkflowError('TTS_AUDIO','Empty speech')
             info=dict(status='complete',path=str(output.relative_to(root)),sha256=store.digest(output),duration=seconds,text=text,key=key)

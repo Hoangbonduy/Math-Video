@@ -7,6 +7,16 @@ from src.shared._workflow_store import WorkflowError
 from src.idea.content import _object
 from src.scene_design import scene_state as runtime
 
+def _luminance(hex_color):
+    rgb = [int(hex_color[i:i+2], 16) / 255.0 for i in (1, 3, 5)]
+    vals = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    return 0.2126 * vals[0] + 0.7152 * vals[1] + 0.0722 * vals[2]
+
+def contrast_ratio(color_a, color_b):
+    la, lb = _luminance(color_a), _luminance(color_b)
+    bright, dark = max(la, lb), min(la, lb)
+    return (bright + 0.05) / (dark + 0.05)
+
 S={'type':'string'}; N={'type':'number'}; I={'type':'integer'}
 def array(item,low=0,high=60):return dict(type='array',items=item,minItems=low,maxItems=high)
 def enum(*items):return dict(type='string',enum=list(items))
@@ -56,7 +66,7 @@ def structure(value,schema,path='design'):
     if 'enum' in schema and value not in schema['enum']:fail(path+': unsupported value '+repr(value))
 
 
-def validate_story(story,scene,seconds):
+def validate_story(story, scene, seconds, *, is_opening_scene=False):
     structure(story,STORY_SCHEMA,'storyboard')
     if story['scene_id']!=scene['scene_id'] or story['narration']!=scene['narration'] or abs(story['duration']-seconds)>1e-6:fail('Storyboard must preserve approved scene_id, narration and target duration')
     if not story['goal'].strip() or not story['visual_strategy'].strip():fail('Storyboard needs a goal and visual strategy')
@@ -70,6 +80,13 @@ def validate_story(story,scene,seconds):
         if any(not criterion.strip() for criterion in beat['criteria']):fail('Storyboard criteria cannot be empty')
         parts.append(beat['narration_excerpt']);previous=beat['end']
     if abs(previous-seconds)>1e-6 or ' '.join(' '.join(parts).split())!=' '.join(scene['narration'].split()):fail('Storyboard excerpts must partition the approved narration exactly, without additions or omissions')
+    if is_opening_scene or scene.get('scene_id') in ('scene_01', 'scene_1'):
+        first_beat = story['beats'][0]
+        first_words = len(first_beat['narration_excerpt'].split())
+        if first_words > 40 or ( len(story['beats']) > 1 and (first_beat['end'] - first_beat['start']) > max(4.5, seconds * 0.55) ):
+            fail('Opening hook beat_01 is too long; isolate the opening question/hook excerpt into a concise beat_01 (<= 40 words) with immediate visual focus')
+        if not any(len(c.strip()) >= 12 for c in first_beat['criteria']):
+            fail('Opening beat_01 requires a concrete visual hook criterion testing the opening question or situation')
     return story
 
 
@@ -101,7 +118,7 @@ def _unique(items,name):
     return result
 
 
-def compile_design(design,scene=None,seconds=None,assets=()):
+def compile_design(design,scene=None,seconds=None,assets=(),background='#0F172A'):
     structure(design,DESIGN_SCHEMA)
     if scene and (design['scene_id']!=scene['scene_id'] or design['narration']!=scene['narration']):fail('Design must preserve approved scene_id and narration')
     if seconds is not None and abs(design['duration']-seconds)>1e-6:fail('Design must preserve target duration')
@@ -232,7 +249,7 @@ def compile_design(design,scene=None,seconds=None,assets=()):
                 continue
             if any(moving_chain(oid)!=moving_chain(bind['target']) for oid in deps):fail('Related geometry must share the same moving group hierarchy: '+bind['id'])
     return dict(objects=objects,groups=groups,parameters=d['parameters'],parameter_tracks=param_tracks,graphs=graphs,bindings=ordered,
-                tracks=tracks,ancestors=ancestors,pivots=pivots,aspect=d['aspect_ratio'],duration=d['duration'])
+                tracks=tracks,ancestors=ancestors,pivots=pivots,aspect=d['aspect_ratio'],duration=d['duration'],background=background)
 
 
 def important_times(design,story):
@@ -280,6 +297,20 @@ def motion_report(plan,fps=12,extra_times=()):
         try:state=runtime.state_at(plan,t)
         except (ValueError,TypeError,KeyError,ArithmeticError,OverflowError) as exc:
             issues.append(dict(category='relation',time=t,object_ids=[],problem=str(exc),fix='Repair the relation or parameter range.'));break
+        if abs(t) < 1e-6:
+            anchor_visible = [
+                oid for oid, obj in plan['objects'].items()
+                if state['objects'][oid]['opacity'] >= 0.5
+                and obj['kind'] in ('text', 'rectangle', 'circle', 'graph', 'plot', 'line', 'image')
+            ]
+            if not anchor_visible:
+                add(dict(
+                    category='timing',
+                    time=0.0,
+                    object_ids=list(plan['objects'])[:4],
+                    problem='First frame is empty or dark because all objects use delayed appear animations',
+                    fix='Display the main title or primary visual anchor immediately at t=0 (omit appear or set start=0); use appear only for subsequent elements.'
+                ))
         visible=[]
         for oid,obj in plan['objects'].items():
             item=state['objects'][oid]
@@ -287,7 +318,42 @@ def motion_report(plan,fps=12,extra_times=()):
             box=runtime.object_box(plan,oid,state)
             if min(box[0],box[1])<-.002 or max(box[2],box[3])>1.002:
                 add(dict(category='layout',time=t,object_ids=[oid],problem='Object leaves the frame during motion',fix='Repair its center/size or group motion path; x/y are box centers.'))
-            if obj['kind']=='text':visible.append((oid,box))
+            if obj['kind']=='text':
+                visible.append((oid,box))
+                label_len = len(item['label'].strip())
+                min_width = min(0.88, max(0.06, label_len * 0.0105))
+                if item['height'] < 0.042 or item['width'] < min_width:
+                    add(dict(
+                        category='layout',
+                        time=t,
+                        object_ids=[oid],
+                        problem=f"Text box {oid} is too small (w={item['width']:.3f}, h={item['height']:.3f}) for {label_len} characters, shrinking font below readable size",
+                        fix='Increase text width/height or shorten the text label so the rendered font stays legible.'
+                    ))
+                bg_color = plan.get('background', '#0F172A')
+                if contrast_ratio(obj['color'], bg_color) < 4.5:
+                    add(dict(
+                        category='layout',
+                        time=t,
+                        object_ids=[oid],
+                        problem=f"Text {oid} color {obj['color']} has insufficient contrast against background {bg_color}",
+                        fix='Change the text color to a bright high-contrast hex color (contrast ratio >= 4.5) such as config.foreground or config.accent.'
+                    ))
+                for bg_id in backgrounds:
+                    if bg_id == oid: continue
+                    bg_state = state['objects'][bg_id]
+                    if bg_state['opacity'] < 0.1: continue
+                    bg_box = runtime.object_box(plan, bg_id, state)
+                    if min(box[2], bg_box[2]) - max(box[0], bg_box[0]) > 0.002 and min(box[3], bg_box[3]) - max(box[1], bg_box[1]) > 0.002:
+                        bg_rect_color = plan['objects'][bg_id]['color']
+                        if contrast_ratio(obj['color'], bg_rect_color) < 3.5:
+                            add(dict(
+                                category='layout',
+                                time=t,
+                                object_ids=[oid, bg_id],
+                                problem=f"Text {oid} color {obj['color']} has insufficient contrast against background rectangle {bg_id} ({bg_rect_color})",
+                                fix='Change the text color to a bright high-contrast hex color (contrast ratio >= 3.5) such as config.foreground or config.accent.'
+                            ))
         for index,(aid,a) in enumerate(visible):
             for bid,b in visible[index+1:]:
                 if bid in plan['objects'][aid]['overlap_with'] or aid in plan['objects'][bid]['overlap_with']:continue
@@ -334,6 +400,36 @@ def motion_report(plan,fps=12,extra_times=()):
                          fix='Separate vertical/horizontal lanes; place roadside observers above or below the moving vehicle lane.'))
         if len(issues)>=20:break
         if any(abs(t-x)<1e-5 for x in extra_times):samples.append(state)
+    early_limit = min(1.2, plan['duration'] * 0.35)
+    early_times = [t for t in times if 0.0 < t <= early_limit]
+    if early_times and not issues:
+        s0 = runtime.state_at(plan, 0.0)
+        moved_early = False
+        for et in early_times:
+            st = runtime.state_at(plan, et)
+            if st['parameters'] != s0['parameters']:
+                moved_early = True
+                break
+            for oid in plan['objects']:
+                a, b = s0['objects'][oid], st['objects'][oid]
+                if (math.dist(a['center'], b['center']) > 1e-3
+                    or abs(a['scale'] - b['scale']) > 1e-2
+                    or abs(a['angle'] - b['angle']) > 0.5
+                    or a['label'] != b['label']
+                    or a['points'] != b['points']
+                    or a['segments'] != b['segments']):
+                    moved_early = True
+                    break
+            if moved_early:
+                break
+        if not moved_early:
+            add(dict(
+                category='timing',
+                time=0.0,
+                object_ids=list(plan['objects'])[:4],
+                problem='Opening segment is static for too long without meaningful visual motion',
+                fix='Start a meaningful motion or parameter track within the first 0.0s..0.8s directly illustrating the opening narration (e.g., folding action, thickness change, point movement).'
+            ))
     return dict(passed=not issues,sample_count=checked,issues=issues[:20],states=samples)
 
 

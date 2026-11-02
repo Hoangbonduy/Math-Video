@@ -30,9 +30,9 @@ function renderVoice() {
   for(const input of [voice,speed,price,rate,skip].filter(Boolean))input.addEventListener('input',captureVoice);
   const actions=el('div',undefined,panel,'actions');
   button(actions,'Lưu cấu hình giọng',async()=>{captureVoice();if(await action('av-settings',{config:voiceDraft}))voiceDraft=null;});
-  const sample=button(actions,'Nghe thử một đoạn',async()=>{captureVoice();if(await action('av-settings',{config:voiceDraft})){voiceDraft=null;await action('audio-sample',{});}});
+  const sample=button(actions,'Nghe thử cảnh đầu',async()=>{captureVoice();if(await action('av-settings',{config:voiceDraft})){voiceDraft=null;await action('audio-sample',{});}});
   sample.disabled=(!edge && !config.allow_unpriced && (!config.vnd_per_million_chars || !config.vnd_per_usd)) || state.stage==='completed';
-  if(state.voice_sample){const audio=el('audio',undefined,panel);audio.controls=true;audio.preload='metadata';audio.src=media(state.voice_sample.path);audio.setAttribute('aria-label','Nghe thử giọng đọc');}
+  if(state.voice_sample?.path){const audio=el('audio',undefined,panel);audio.controls=true;audio.preload='metadata';audio.src=media(state.voice_sample.path);audio.setAttribute('aria-label','Nghe thử giọng đọc');}
   for(const job of state.audio_generation.jobs||[]){el('p',job.job_id+' · '+label(job.status)+(job.last_error?' · '+job.last_error:''),panel,'feedback-help');for(const call of job.uncertain_requests||[])button(panel,'Thử lại lượt agent chưa rõ kết quả '+call.slice(0,8),()=>action('av-generate',{scene_id:job.scene_id,retry_uncertain:call}));}
   for(const call of state.audio_generation.calls||[]){if(['uncertain','in_flight'].includes(call.status))button(panel,'Tiếp tục lượt giọng '+(call.provider==='edge'?'Microsoft':'FPT')+' '+call.id.slice(0,8),()=>action('audio-retry',{call_id:call.id}));}
   renderMusic();
@@ -70,7 +70,7 @@ function renderMusic() {
     if(voiceDraft){if(!await action('av-settings',{config:voiceDraft}))return;voiceDraft=null;}
     if(await action('music-settings',{config:musicDraft})){
       musicDraft=null;
-      if(state.continuous_preview?.ready){previewMode='audio';await action('preview-build',{with_audio:true,keep_duration:true});}
+      if(state.continuous_preview?.ready){previewMode='audio';await action('preview-build',{with_audio:true,keep_duration:false});}
     }
   },'primary');
   apply.disabled=workflowBusy || state.stage==='completed';
@@ -116,7 +116,7 @@ function renderContinuousPreview() {
     if (config.provider==='fpt' && !config.allow_unpriced && (!config.vnd_per_million_chars || !config.vnd_per_usd)) {
       openVoiceSettings(); notice('Điền đơn giá FPT và tỷ giá, sau đó lưu cấu hình giọng trước khi thêm tiếng.', true); return;
     }
-    previewMode = 'audio'; await action('preview-build', {with_audio:true, keep_duration:true});
+    previewMode = 'audio'; await action('preview-build', {with_audio:true, keep_duration:false});
   }, 'primary');
   addVoice.disabled = !preview.ready || workflowBusy;
   const captionToggle = button(actions, subtitlesVisible ? 'Ẩn phụ đề' : 'Hiện phụ đề', () => {
@@ -129,9 +129,9 @@ function renderContinuousPreview() {
   captionToggle.disabled = !item;
   if (building) el('p', 'Đang ghép bản dựng' + (previewMode === 'audio' ? ' và thêm lời đọc' : '') + '… Video sẽ xuất hiện tại đây khi hoàn tất.', parent, 'preview-build-status');
   if (task?.state === 'failed') el('p', task.error || 'Chưa ghép được video. Hãy thử lại.', parent, 'preview-build-error');
-  else if(!preview.audio && state.audio_generation.config.provider==='fpt' && state.audio_generation?.calls?.at(-1)?.http_status===429)el('p','FPT đang giới hạn tần suất gọi (HTTP 429). Đoạn giọng đã tạo được giữ lại trong Nghe thử một đoạn; chưa có đủ lời đọc cho toàn bộ video.',parent,'preview-build-error');
+  else if(!preview.audio && state.audio_generation.config.provider==='fpt' && state.audio_generation?.calls?.at(-1)?.http_status===429)el('p','FPT đang giới hạn tần suất gọi (HTTP 429). Đoạn giọng đã tạo được giữ lại trong Nghe thử cảnh đầu; chưa có đủ lời đọc cho toàn bộ video.',parent,'preview-build-error');
   if (!item) {
-    emptyViewer(parent, preview.ready ? 'Đang chuẩn bị video liền mạch' : 'Chưa đủ cảnh để ghép', preview.ready ? 'Ghép các clip đã dựng tại máy.' : preview.message || 'Hoàn tất bản dựng của các cảnh trước.');
+    emptyViewer(parent, preview.ready ? 'Chưa có bản dựng' : 'Chưa đủ cảnh để ghép', preview.ready ? 'Bấm Ghép bản xem trước hoặc Thêm tiếng để tạo bản dựng.' : preview.message || 'Hoàn tất bản dựng của các cảnh trước.');
   } else {
     const video = el('video', undefined, parent, 'continuous-video');
     video.id = 'continuous-video'; video.dataset.path = item.path;
@@ -173,14 +173,14 @@ function renderContinuousPreview() {
     downloadLink(links, 'Tải video MP4', item.path); downloadLink(links, 'Tải âm thanh WAV', item.audio_path); downloadLink(links, 'Tải lời đọc riêng', item.narration_path); downloadLink(links, 'Tải phụ đề SRT', item.subtitle_path);
     const report=el('a','Tải báo cáo kiểm tra',links);report.href='/api/diagnostics';report.download='bao-cao-kiem-tra.json';
     if (preview.audio && preview.silent) button(links, item.with_audio ? 'Xem bản không tiếng' : 'Xem bản có tiếng', () => { previewMode = item.with_audio ? 'silent' : 'audio'; render(); });
-    el('p', item.with_audio ? 'Phụ đề và lời đọc khớp theo thời lượng cảnh; hình giữ đúng thời lượng gốc.' : 'Phụ đề đang chia theo thời lượng cảnh. Chọn Thêm tiếng để căn theo lời đọc.', parent, 'preview-help');
+    el('p', item.with_audio ? 'Lời đọc giữ tốc độ đã chọn; phụ đề căn theo âm thanh thực. Cảnh được kéo dài khi cần để đọc rõ.' : 'Phụ đề đang chia theo thời lượng cảnh. Chọn Thêm tiếng để căn theo thời lượng lời đọc thực.', parent, 'preview-help');
   }
   const bottom = el('div', undefined, parent, 'actions preview-bottom');
   const build = button(bottom, item ? 'Ghép lại bản xem trước' : 'Ghép bản xem trước', () => { previewMode = 'silent'; return action('preview-build',{with_audio:false}); });
   build.disabled = !preview.ready || workflowBusy;
   button(bottom, sceneReviewOpen ? 'Thu gọn duyệt từng cảnh' : 'Duyệt từng cảnh', () => { sceneReviewOpen = !sceneReviewOpen; render(); });
   el('p','Ghép bản xem trước chạy tại máy. Thêm tiếng dùng '+(state.audio_generation.config.provider==='edge'?'giọng Microsoft Edge, không cần API key; cần Internet.':'dịch vụ giọng FPT đã cấu hình.'),parent,'preview-help');
-  if (!preview.silent && !preview.audio && preview.ready && !workflowBusy && task?.state !== 'failed') {
+  if (preview.auto_build !== false && !preview.silent && !preview.audio && preview.ready && !workflowBusy && task?.state !== 'failed') {
     const key = JSON.stringify([state.project_id, state.artifacts.filter(a => ['script','scene_design','scene_clip'].includes(a.stage) && !a.invalidated).map(a => a.sha256),Object.values(state.scene_drafts || {}).map(d=>d.reference.sha256)]);
     if (!previewAttempts.has(key)) { previewAttempts.add(key); queueMicrotask(() => action('preview-build',{with_audio:false})); }
   }

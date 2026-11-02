@@ -376,9 +376,11 @@ def resume_revision(project_dir,revision_id,*,retry_uncertain=None):
 def _context(root,p,reviews,r,sid):
     script,payload,durations=sg._context(root,p,reviews)
     baseline=r['snapshot']['scenes'][sid]
+    is_opening_scene = (sid == p['scene_ids'][0])
     context=dict(script=payload['script'],brief=payload['brief'],scene=next(s for s in payload['script']['scenes'] if s['scene_id']==sid),
         target_seconds=durations[sid],config=copy.deepcopy(r['snapshot']['dependencies'].get('scene_config.json') and store.read_json(root/'scene_config.json') or sg.DEFAULT_CONFIG),
-        feedback=r['feedback'],revision_plan=r['plan'],shared_resources=r['plan']['resources'])
+        feedback=r['feedback'],revision_plan=r['plan'],shared_resources=r['plan']['resources'],
+        is_opening_scene=is_opening_scene)
     for ref in baseline['scene_design'].get('resource_refs',[]):
         if ref['resource_id']=='scene_config.json': context['config']=store.read_json(root/ref['path'])
     context['resource_overrides']=[dict(ref,content=store.read_json(root/ref['path'])) for ref in r.get('resource_versions',[]) if sid in ref['scenes']]

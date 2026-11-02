@@ -30,6 +30,7 @@ class GeneratedScene(Scene):
                 if key not in text_cache:text_cache[key]=Text(item['label'],font=STYLE['font'],font_size=26,color=color)
                 mob=text_cache[key].copy()
                 factor=min(1,spec['width']*frame_w/max(mob.width,1e-8),spec['height']*frame_h/max(mob.height,1e-8))*scale_factor
+                mob.text_scale_factor=float(factor)
                 mob.scale(factor).rotate(-math.radians(item['angle'])).move_to(center).set_opacity(opacity)
             elif kind in ('rectangle','circle','dot'):
                 name=oid.lower()
@@ -85,6 +86,8 @@ class GeneratedScene(Scene):
                 for oid,mob in mobs.items():
                     item=state['objects'][oid];kind=PLAN['objects'][oid]['kind']
                     actual[oid]=dict(center=normalized(mob.get_center()),width=float(mob.width/frame_w),height=float(mob.height/frame_h),label=item['label'],opacity=item['opacity'])
+                    if kind=='text':
+                        actual[oid]['text_scale']=float(mob.text_scale_factor if hasattr(mob,'text_scale_factor') else 1.0)
                     if kind in ('line','plot'):
                         actual[oid]['points']=[normalized(mob.get_start()),normalized(mob.get_end())]
                         vertices=[normalized(p) for p in mob.get_start_anchors()]+[normalized(mob.get_end())]
@@ -158,6 +161,14 @@ def _audit(plan,actual,frames,fps):
             rendered=row['objects'].get(oid);target=expected['objects'][oid]
             if rendered is None:
                 issues.append(dict(category='relation',time=row['time'],object_ids=[oid],problem='Object missing from rendered state',fix='Repair renderer object mapping.'));continue
+            if spec['kind'] == 'text' and rendered.get('opacity', 0) >= 0.2 and rendered.get('text_scale', 1.0) < 0.55:
+                issues.append(dict(
+                    category='layout',
+                    time=row['time'],
+                    object_ids=[oid],
+                    problem=f"Rendered text scale ({rendered['text_scale']:.2f}) is too small to read clearly",
+                    fix='Widen/heighten the text box or shorten the label text.'
+                ))
             if spec['kind'] in ('dot','circle','text','rectangle','image'):
                 if math.dist(target['center'],rendered['center'])>1e-5:
                     issues.append(dict(category='relation',time=row['time'],object_ids=[oid],problem='Rendered position differs from bound model',fix='Repair the renderer relation update.'))

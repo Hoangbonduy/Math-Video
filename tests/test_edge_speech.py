@@ -1,4 +1,5 @@
 import copy,json,os,subprocess,tempfile,unittest
+import math,struct,wave
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from src.preview import audio
@@ -14,6 +15,61 @@ class EdgeSpeechTests(unittest.TestCase):
         self.config=dict(audio.DEFAULTS,provider='edge',voice='vi-VN-HoaiMyNeural',vnd_per_million_chars=None,vnd_per_usd=None,allow_unpriced=False)
     async def download(self,text,voice,rate,path,boundary='WordBoundary'):
         subprocess.run([binary('ffmpeg'),'-y','-v','error','-f','lavfi','-i','sine=frequency=500:duration=0.5','-c:a','libmp3lame',str(path)],check=True)
+    def make_pcm(self, name, lead, tail, tone=True):
+        path = self.root/name
+        samples = [0]*round(lead*48000)
+        samples += [round(9000*math.sin(2*math.pi*500*i/48000)) if tone else 0 for i in range(24000)]
+        samples += [0]*round(tail*48000)
+        frames = struct.pack('<'+'h'*len(samples), *samples)
+        with wave.open(str(path), 'wb') as wav:
+            wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(48000)
+            wav.writeframes(frames)
+        return dict(path=path.name, sha256=store.digest(path), duration=len(samples)/48000), frames
+
+    def test_edge_trim_caps_total_and_preserves_spoken_samples_and_raw_cache(self):
+        from src.preview import edge_speech as edge
+        source, frames = self.make_pcm('raw.wav', .2, .3)
+        original = (self.root/source['path']).read_bytes()
+        result = edge._trim_cached(self.root, source)
+        self.assertAlmostEqual(result['trimmed_seconds'], .35)
+        self.assertAlmostEqual(source['duration']-result['duration'], .35)
+        with wave.open(str(self.root/result['path']), 'rb') as wav:
+            actual = wav.readframes(wav.getnframes())
+        start = frames.find(actual)
+        self.assertGreaterEqual(start, 0)
+        self.assertEqual(start % 2, 0)
+        self.assertGreaterEqual(.2-start/2/48000, .04)
+        removed_tail = len(frames)-start-len(actual)
+        self.assertGreaterEqual(.3-removed_tail/2/48000, .08-1/48000)
+        self.assertEqual((self.root/source['path']).read_bytes(), original)
+        self.assertEqual(edge._trim_cached(self.root, source), result)
+        (self.root/result['path']).write_bytes(b'changed')
+        with self.assertRaisesRegex(store.WorkflowError, 'CACHE_CORRUPT'):
+            edge._trim_cached(self.root, source)
+
+    def test_edge_trim_keeps_short_padding_and_all_silent_audio(self):
+        from src.preview import edge_speech as edge
+        for name, lead, tail, tone in [('short.wav', .02, .03, True), ('silent.wav', .2, .3, False)]:
+            source, frames = self.make_pcm(name, lead, tail, tone)
+            result = edge._trim_cached(self.root, source)
+            self.assertEqual(result['trimmed_seconds'], 0)
+            with wave.open(str(self.root/result['path']), 'rb') as wav:
+                self.assertEqual(wav.readframes(wav.getnframes()), frames)
+
+    def test_processing_version_retires_only_edge_audio_preview(self):
+        from src.shared import workflow as wf
+        from src.preview import edge_speech as edge
+        root = fixture(self.root/'project')
+        av_workflow.configure(root, self.config)
+        project, reviews = wf._load(root)
+        voiced = continuous_preview.snapshot(root, project, reviews, True)
+        silent = continuous_preview.snapshot(root, project, reviews, False)
+        before_audio = continuous_preview.fingerprint(voiced)
+        before_silent = continuous_preview.fingerprint(silent)
+        with patch.object(edge, 'TRIM_VERSION', edge.TRIM_VERSION+1):
+            self.assertNotEqual(continuous_preview.fingerprint(voiced), before_audio)
+            self.assertEqual(continuous_preview.fingerprint(silent), before_silent)
+
     def test_default_is_nam_minh_edge_and_wrong_provider_voices_rejected(self):
         self.assertEqual(audio.settings(self.root)['provider'],'edge');self.assertEqual(audio.settings(self.root)['voice'],'vi-VN-NamMinhNeural')
         for values in [dict(provider='fpt'),dict(voice='leminh'),dict(provider='unsupported')]:

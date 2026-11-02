@@ -20,37 +20,41 @@ SYNTHESIZER = audio.synthesize
 FPS = 30
 
 
+def scene_source(root, project, sid):
+    """Resolve one scene, also usable before all other scenes are ready."""
+    from src.scene_design.scene_drafts import current as current_drafts, verify as verify_draft
+    design = wf._latest(project, 'scene_design', sid)
+    clip = wf._latest(project, 'scene_clip', sid)
+    draft = current_drafts(root).get(sid) if not clip else None
+    is_draft = False
+    if draft:
+        verify_draft(root, draft)
+        files = {f['path']: f for f in draft['files']}
+        version = draft['job_id']
+        design = dict(files[draft['design_path']], version=version)
+        clip = dict(path=draft['reference']['path'], sha256=draft['reference']['sha256'], version=version)
+        is_draft = True
+    elif design and not clip and design.get('manim_render'):
+        ref = design['manim_render']
+        clip = dict(path=ref['path'], sha256=ref['sha256'], version=design['version'])
+        is_draft = True
+    if not design or not clip:
+        raise WorkflowError('PREVIEW_INPUT', 'Chưa có đủ video cảnh. Tạo hoặc chạy lại các cảnh còn thiếu trong Thiết kế cảnh.')
+    return dict(scene_id=sid, design=copy.deepcopy(design), clip=copy.deepcopy(clip),
+                storyboard=pacing.storyboard_reference(root, design), draft=is_draft)
+
+
 def snapshot(root, project, reviews, with_audio=False, keep_duration=True):
     script = wf._latest(project, 'script', None)
     if not script or wf._request(reviews, script)['status'] != 'approved':
         raise WorkflowError('PREVIEW_INPUT', 'Duyệt kịch bản trước khi xem bản dựng.')
     if 'script.json' not in script.get('bundle', {}):
         raise WorkflowError('PREVIEW_INPUT', 'Bản dựng cần lời dẫn từ kịch bản có dữ liệu từng cảnh.')
-    from src.scene_design.scene_drafts import current as current_drafts, verify as verify_draft
-    drafts=current_drafts(root)
-    sources = []
-    for sid in project['scene_ids']:
-        design = wf._latest(project, 'scene_design', sid)
-        clip = wf._latest(project, 'scene_clip', sid)
-        draft=drafts.get(sid) if not clip else None
-        is_draft=False
-        if draft:
-            verify_draft(root,draft)
-            files={f['path']:f for f in draft['files']}
-            version=draft['job_id']
-            design=dict(files[draft['design_path']],version=version)
-            clip=dict(path=draft['reference']['path'],sha256=draft['reference']['sha256'],version=version)
-            is_draft=True
-        elif design and not clip and design.get('manim_render'):
-            ref=design['manim_render'];clip=dict(path=ref['path'],sha256=ref['sha256'],version=design['version']);is_draft=True
-        if not design or not clip:
-            raise WorkflowError('PREVIEW_INPUT', 'Chưa có đủ video cảnh. Tạo hoặc chạy lại các cảnh còn thiếu trong Thiết kế cảnh.')
-        sources.append(dict(scene_id=sid, design=copy.deepcopy(design), clip=copy.deepcopy(clip),
-                            storyboard=pacing.storyboard_reference(root, design), draft=is_draft))
+    sources = [scene_source(root, project, sid) for sid in project['scene_ids']]
     if not sources:
         raise WorkflowError('PREVIEW_INPUT', 'Chưa có cảnh để ghép.')
     voice = {key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if with_audio else None
-    return dict(script=copy.deepcopy(script), scenes=sources, voice=voice, keep_duration=keep_duration)
+    return dict(script=copy.deepcopy(script), scenes=sources, voice=voice, keep_duration=False if with_audio else keep_duration)
 
 
 def fingerprint(inputs):
@@ -58,7 +62,10 @@ def fingerprint(inputs):
     ref = lambda a: dict(version=a['version'], sha256=a['sha256'], path=a['path'])
     identity = dict(script=ref(inputs['script']), scenes=[dict(scene_id=s['scene_id'],
                     design=ref(s['design']), clip=ref(s['clip']), storyboard=s.get('storyboard')) for s in inputs['scenes']],
-                    voice=inputs['voice'], keep_duration=inputs.get('keep_duration', True), format_version=4)
+                    voice=inputs['voice'], keep_duration=False if inputs['voice'] else inputs.get('keep_duration', True),
+                    format_version=5, pacing_version=pacing.VERSION)
+    if inputs['voice'] and inputs['voice']['provider'] == 'edge':
+        identity['speech_processing_version'] = audio.processing_version(inputs['voice'])
     return hashlib.sha256(_json_bytes(identity)).hexdigest()
 
 
@@ -68,7 +75,7 @@ def _base_status(root, project=None):
         project, reviews = wf._load(root)
     else:
         _, reviews = wf._load(root)
-    result = dict(ready=False, silent=None, audio=None, missing=[])
+    result = dict(ready=False, silent=None, audio=None, missing=[], pacing_version=pacing.VERSION, auto_build=True)
     try:
         inputs = snapshot(root, project, reviews)
     except WorkflowError as exc:
@@ -81,9 +88,10 @@ def _base_status(root, project=None):
     result['draft'] = any(s.get('draft') for s in inputs['scenes'])
     path = root / BASE / 'index.json'
     index = store.read_json(path) if path.exists() else {}
+    result['auto_build'] = not index.get('cleared', False)
     for mode in ('silent', 'audio'):
         item = index.get(mode)
-        if item:
+        if item and item.get('pacing_version') == pacing.VERSION:
             kd = item.get('keep_duration', True)
             current = dict(inputs, voice={key: audio.settings(root)[key] for key in ('provider', 'voice', 'speed')} if mode == 'audio' else None, keep_duration=kd)
             if item.get('fingerprint') == fingerprint(current):
@@ -127,6 +135,9 @@ def _generate_base(project_dir, with_audio=False, keep_duration=True):
         raise WorkflowError('INVALID_INPUT', 'with_audio phải là boolean.')
     if type(keep_duration) is not bool:
         raise WorkflowError('INVALID_INPUT', 'keep_duration phải là boolean.')
+    # Accept legacy callers, but never compress speech to preserve picture length.
+    if with_audio:
+        keep_duration = False
     root = Path(project_dir).resolve()
     mode = 'audio' if with_audio else 'silent'
     with _job_lock(root):
@@ -164,25 +175,10 @@ def _generate_base(project_dir, with_audio=False, keep_duration=True):
             # Motion uses the original timeline; only explicit beat holds add time.
             seconds = math.ceil(_seconds(source_path) * FPS - 1e-4) / FPS
             speech, beats = None, None
-            if with_audio and keep_duration:
-                total = sum(len(t.split()) for t in phrases)
-                segments, local = [], 0.0
-                for phrase in phrases:
-                    ref = SYNTHESIZER(root, phrase, config)
-                    end = local + seconds * len(phrase.split()) / total
-                    segments.append(dict(text=phrase, start=local, end=end, audio=ref))
-                    local = end
+            if with_audio:
+                prepared = pacing.prepare(root, source, text, config, SYNTHESIZER, seconds, FPS)
+                segments, beats, seconds = prepared['segments'], prepared['beats'], prepared['duration']
                 speech = directory / f'scene_{index:03}.wav'
-                pacing.speech_track(root, segments, speech, seconds, fit_to_cue=True)
-                beats = None
-            elif with_audio:
-                segments = []
-                for phrase in phrases:
-                    ref = SYNTHESIZER(root, phrase, config)
-                    segments.append(dict(text=phrase, audio=ref))
-                speech = directory / f'scene_{index:03}.wav'
-                beats = pacing.plan(root, source, phrases, segments, seconds, FPS)
-                seconds = beats[-1]['end_frame'] / FPS
                 pacing.speech_track(root, segments, speech, seconds)
             else:
                 total = sum(len(t.split()) for t in phrases)
@@ -220,7 +216,8 @@ def _generate_base(project_dir, with_audio=False, keep_duration=True):
         result = dict(path=str(output.relative_to(root)), sha256=store.digest(output),
                       subtitle_path=str(captions.relative_to(root)), subtitle_sha256=store.digest(captions),
                       fingerprint=key, with_audio=with_audio, keep_duration=keep_duration, draft=any(s.get('draft') for s in inputs['scenes']), duration=offset, scenes=scenes, cues=cues,
-                      caption_timing='speech_phrases' if with_audio else 'estimated', resolution=list(resolution))
+                      caption_timing='speech_phrases' if with_audio else 'estimated',
+                      pacing_version=pacing.VERSION, resolution=list(resolution))
         if with_audio:
             narration_wav=directory/'narration.wav'
             export.concat_audio([directory/f'scene_{i:03}.wav' for i in range(len(scenes))],narration_wav)
@@ -231,6 +228,7 @@ def _generate_base(project_dir, with_audio=False, keep_duration=True):
                 raise WorkflowError('STALE_JOB', 'Kịch bản, cảnh hoặc giọng đọc đã đổi. Hãy dựng lại bản xem trước.')
             path = root / BASE / 'index.json'
             index = store.read_json(path) if path.exists() else {}
+            index.pop('cleared', None)
             index[mode] = result
             store.atomic_write(path, index)
         return result

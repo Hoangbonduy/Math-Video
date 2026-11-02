@@ -1,0 +1,410 @@
+{
+  "silent": {
+    "path": "generation/continuous_preview/662e4f0298bd5829979efc2f7229c625ca381bffaf329de3da6fd2b8d9d7c40f/preview.mp4",
+    "sha256": "315a7db2ba22ff1ce164aa9a2ad392c275041f66b6107d537199726105b36711",
+    "subtitle_path": "generation/continuous_preview/662e4f0298bd5829979efc2f7229c625ca381bffaf329de3da6fd2b8d9d7c40f/captions.srt",
+    "subtitle_sha256": "6317dbfb5d22a5da732bca4defe530b686f84bb9d7f3968ae98b81ce265dadfa",
+    "fingerprint": "662e4f0298bd5829979efc2f7229c625ca381bffaf329de3da6fd2b8d9d7c40f",
+    "with_audio": false,
+    "keep_duration": true,
+    "draft": false,
+    "duration": 35.06666666666666,
+    "scenes": [
+      {
+        "scene_id": "s1",
+        "title": "Cảnh 01",
+        "start": 0.0,
+        "end": 6.733333333333333
+      },
+      {
+        "scene_id": "s2",
+        "title": "Cảnh 02",
+        "start": 6.733333333333333,
+        "end": 14.033333333333333
+      },
+      {
+        "scene_id": "s3",
+        "title": "Cảnh 03",
+        "start": 14.033333333333333,
+        "end": 20.766666666666666
+      },
+      {
+        "scene_id": "s4",
+        "title": "Cảnh 04",
+        "start": 20.766666666666666,
+        "end": 24.566666666666666
+      },
+      {
+        "scene_id": "s5",
+        "title": "Cảnh 05",
+        "start": 24.566666666666666,
+        "end": 35.06666666666666
+      }
+    ],
+    "cues": [
+      {
+        "text": "Gấp một tờ giấy 42 lần là chạm tới Mặt Trăng?",
+        "start": 0.0,
+        "end": 3.2202898550724637,
+        "scene_id": "s1"
+      },
+      {
+        "text": "Giả sử mỗi lần gấp,",
+        "start": 3.2202898550724637,
+        "end": 4.684057971014493,
+        "scene_id": "s1"
+      },
+      {
+        "text": "độ dày của giấy tăng gấp đôi.",
+        "start": 4.684057971014493,
+        "end": 6.733333333333333,
+        "scene_id": "s1"
+      },
+      {
+        "text": "Ban đầu giấy rất mỏng,",
+        "start": 6.733333333333333,
+        "end": 8.193333333333333,
+        "scene_id": "s2"
+      },
+      {
+        "text": "nên vài lần gấp chẳng thấm vào đâu.",
+        "start": 8.193333333333333,
+        "end": 10.529333333333334,
+        "scene_id": "s2"
+      },
+      {
+        "text": "Nhưng đến lần 23,",
+        "start": 10.529333333333334,
+        "end": 11.697333333333333,
+        "scene_id": "s2"
+      },
+      {
+        "text": "độ dày đã vượt chiều cao Landmark 81.",
+        "start": 11.697333333333333,
+        "end": 14.033333333333331,
+        "scene_id": "s2"
+      },
+      {
+        "text": "Gấp tiếp tới lần 25,",
+        "start": 14.033333333333333,
+        "end": 15.497101449275362,
+        "scene_id": "s3"
+      },
+      {
+        "text": "nó vượt cả đỉnh Fansipan.",
+        "start": 15.497101449275362,
+        "end": 16.96086956521739,
+        "scene_id": "s3"
+      },
+      {
+        "text": "Đến lần 30,",
+        "start": 16.96086956521739,
+        "end": 17.839130434782607,
+        "scene_id": "s3"
+      },
+      {
+        "text": "độ dày vượt ranh giới quy ước của không gian.",
+        "start": 17.839130434782607,
+        "end": 20.766666666666666,
+        "scene_id": "s3"
+      },
+      {
+        "text": "Và ở lần 42,",
+        "start": 20.766666666666666,
+        "end": 21.935897435897434,
+        "scene_id": "s4"
+      },
+      {
+        "text": "nó vượt khoảng cách trung bình tới Mặt Trăng.",
+        "start": 21.935897435897434,
+        "end": 24.566666666666666,
+        "scene_id": "s4"
+      },
+      {
+        "text": "Nhưng ngoài đời càng dày càng khó gấp;",
+        "start": 24.566666666666666,
+        "end": 26.9,
+        "scene_id": "s5"
+      },
+      {
+        "text": "lý thuyết cho phép tăng mãi.",
+        "start": 26.9,
+        "end": 28.65,
+        "scene_id": "s5"
+      },
+      {
+        "text": "Vậy cần bao nhiêu lần gấp để vượt vũ trụ quan sát được?",
+        "start": 28.65,
+        "end": 32.44166666666666,
+        "scene_id": "s5"
+      },
+      {
+        "text": "Đăng ký kênh Axiora để biết thêm chi tiết.",
+        "start": 32.44166666666666,
+        "end": 35.06666666666666,
+        "scene_id": "s5"
+      }
+    ],
+    "caption_timing": "estimated",
+    "pacing_version": 1,
+    "resolution": [
+      640,
+      360
+    ]
+  },
+  "audio": {
+    "path": "generation/continuous_preview/8cebe96dae46ca9d37bc9efc6029f14e0b8d0fdeb849db1fbd0c02427afdbf51/preview.mp4",
+    "sha256": "6da4584548425516eacb1bb7a54912ef1082b1747a7726519e9988e0fec488b5",
+    "subtitle_path": "generation/continuous_preview/8cebe96dae46ca9d37bc9efc6029f14e0b8d0fdeb849db1fbd0c02427afdbf51/captions.srt",
+    "subtitle_sha256": "7468b022fbbdca11efef074965e80b43a4b05c206c27a7046443c3d2e8b4791a",
+    "fingerprint": "8cebe96dae46ca9d37bc9efc6029f14e0b8d0fdeb849db1fbd0c02427afdbf51",
+    "with_audio": true,
+    "keep_duration": false,
+    "draft": false,
+    "duration": 52.53333333333334,
+    "scenes": [
+      {
+        "scene_id": "s1",
+        "title": "Cảnh 01",
+        "start": 0.0,
+        "end": 9.233333333333333,
+        "pacing": "native_motion_with_beat_holds",
+        "beats": [
+          {
+            "beat_id": "beat_01",
+            "source_start_frame": 0,
+            "source_end_frame": 84,
+            "start_frame": 0,
+            "end_frame": 124,
+            "hold_frames": 40
+          },
+          {
+            "beat_id": "beat_02",
+            "source_start_frame": 84,
+            "source_end_frame": 202,
+            "start_frame": 124,
+            "end_frame": 277,
+            "hold_frames": 35
+          }
+        ],
+        "hold_seconds": 2.5
+      },
+      {
+        "scene_id": "s2",
+        "title": "Cảnh 02",
+        "start": 9.233333333333333,
+        "end": 21.2,
+        "pacing": "native_motion_with_beat_holds",
+        "beats": [
+          {
+            "beat_id": "beat_01",
+            "source_start_frame": 0,
+            "source_end_frame": 102,
+            "start_frame": 0,
+            "end_frame": 178,
+            "hold_frames": 76
+          },
+          {
+            "beat_id": "beat_02",
+            "source_start_frame": 102,
+            "source_end_frame": 219,
+            "start_frame": 178,
+            "end_frame": 359,
+            "hold_frames": 64
+          }
+        ],
+        "hold_seconds": 4.666666666666667
+      },
+      {
+        "scene_id": "s3",
+        "title": "Cảnh 03",
+        "start": 21.2,
+        "end": 32.7,
+        "pacing": "native_motion_with_beat_holds",
+        "beats": [
+          {
+            "beat_id": "beat_01",
+            "source_start_frame": 0,
+            "source_end_frame": 100,
+            "start_frame": 0,
+            "end_frame": 176,
+            "hold_frames": 76
+          },
+          {
+            "beat_id": "beat_02",
+            "source_start_frame": 100,
+            "source_end_frame": 202,
+            "start_frame": 176,
+            "end_frame": 345,
+            "hold_frames": 67
+          }
+        ],
+        "hold_seconds": 4.766666666666667
+      },
+      {
+        "scene_id": "s4",
+        "title": "Cảnh 04",
+        "start": 32.7,
+        "end": 38.800000000000004,
+        "pacing": "native_motion_with_beat_holds",
+        "beats": [
+          {
+            "beat_id": "beat_01",
+            "source_start_frame": 0,
+            "source_end_frame": 114,
+            "start_frame": 0,
+            "end_frame": 183,
+            "hold_frames": 69
+          }
+        ],
+        "hold_seconds": 2.3
+      },
+      {
+        "scene_id": "s5",
+        "title": "Cảnh 05",
+        "start": 38.800000000000004,
+        "end": 52.53333333333334,
+        "pacing": "native_motion_with_beat_holds",
+        "beats": [
+          {
+            "beat_id": "beat_01",
+            "source_start_frame": 0,
+            "source_end_frame": 126,
+            "start_frame": 0,
+            "end_frame": 180,
+            "hold_frames": 54
+          },
+          {
+            "beat_id": "beat_02",
+            "source_start_frame": 126,
+            "source_end_frame": 231,
+            "start_frame": 180,
+            "end_frame": 305,
+            "hold_frames": 20
+          },
+          {
+            "beat_id": "beat_03",
+            "source_start_frame": 231,
+            "source_end_frame": 315,
+            "start_frame": 305,
+            "end_frame": 412,
+            "hold_frames": 23
+          }
+        ],
+        "hold_seconds": 3.2333333333333334
+      }
+    ],
+    "cues": [
+      {
+        "text": "Gấp một tờ giấy 42 lần là chạm tới Mặt Trăng?",
+        "start": 0.15,
+        "end": 3.894,
+        "scene_id": "s1"
+      },
+      {
+        "text": "Giả sử mỗi lần gấp,",
+        "start": 4.133333333333334,
+        "end": 6.341333333333334,
+        "scene_id": "s1"
+      },
+      {
+        "text": "độ dày của giấy tăng gấp đôi.",
+        "start": 6.441333333333334,
+        "end": 9.081333333333333,
+        "scene_id": "s1"
+      },
+      {
+        "text": "Ban đầu giấy rất mỏng,",
+        "start": 9.383333333333333,
+        "end": 11.807333333333332,
+        "scene_id": "s2"
+      },
+      {
+        "text": "nên vài lần gấp chẳng thấm vào đâu.",
+        "start": 11.907333333333332,
+        "end": 14.931333333333333,
+        "scene_id": "s2"
+      },
+      {
+        "text": "Nhưng đến lần 23,",
+        "start": 15.166666666666666,
+        "end": 17.590666666666664,
+        "scene_id": "s2"
+      },
+      {
+        "text": "độ dày đã vượt chiều cao Landmark 81.",
+        "start": 17.690666666666665,
+        "end": 21.026666666666664,
+        "scene_id": "s2"
+      },
+      {
+        "text": "Gấp tiếp tới lần 25,",
+        "start": 21.349999999999998,
+        "end": 23.966,
+        "scene_id": "s3"
+      },
+      {
+        "text": "nó vượt cả đỉnh Fansipan.",
+        "start": 24.066,
+        "end": 26.826,
+        "scene_id": "s3"
+      },
+      {
+        "text": "Đến lần 30,",
+        "start": 27.066666666666666,
+        "end": 29.106666666666666,
+        "scene_id": "s3"
+      },
+      {
+        "text": "độ dày vượt ranh giới quy ước của không gian.",
+        "start": 29.206666666666663,
+        "end": 32.54266666666666,
+        "scene_id": "s3"
+      },
+      {
+        "text": "Và ở lần 42,",
+        "start": 32.85,
+        "end": 35.274,
+        "scene_id": "s4"
+      },
+      {
+        "text": "nó vượt khoảng cách trung bình tới Mặt Trăng.",
+        "start": 35.374,
+        "end": 38.638000000000005,
+        "scene_id": "s4"
+      },
+      {
+        "text": "Nhưng ngoài đời càng dày càng khó gấp;",
+        "start": 38.95,
+        "end": 41.87800000000001,
+        "scene_id": "s5"
+      },
+      {
+        "text": "lý thuyết cho phép tăng mãi.",
+        "start": 42.038000000000004,
+        "end": 44.55800000000001,
+        "scene_id": "s5"
+      },
+      {
+        "text": "Vậy cần bao nhiêu lần gấp để vượt vũ trụ quan sát được?",
+        "start": 44.800000000000004,
+        "end": 48.736000000000004,
+        "scene_id": "s5"
+      },
+      {
+        "text": "Đăng ký kênh Axiora để biết thêm chi tiết.",
+        "start": 48.96666666666667,
+        "end": 52.35066666666667,
+        "scene_id": "s5"
+      }
+    ],
+    "caption_timing": "speech_phrases",
+    "pacing_version": 1,
+    "resolution": [
+      640,
+      360
+    ],
+    "narration_path": "generation/continuous_preview/8cebe96dae46ca9d37bc9efc6029f14e0b8d0fdeb849db1fbd0c02427afdbf51/narration.wav",
+    "narration_sha256": "2706ae819d0a85d41bd1889ee19e84e173b6307d981e9a1bd8f245fbc9f3b770"
+  }
+}

@@ -55,6 +55,8 @@ def messages(root,story,design,manifest,checks):
     instruction=('You are the visual reviewer of a Vietnamese educational Manim scene. Inspect EVERY supplied contact-sheet panel in time order. '
       'The panels are actual encoded video frames, with timestamps. Compare the rendered explanation against EVERY storyboard criterion, including transitions and relationships. '
       'Check meaning, legibility, alignment, occlusion, moving groups, points/lines/labels, numeric values and pacing. A valid JSON or successful render is not evidence of a good scene. '
+      'For the opening beat (beat_01), verify that the first frames (t=0.0s..1.5s) immediately present a clear, legible visual hook '
+      'with visible anchor objects (never a blank/dark frame), readable high-contrast text, and early motion aligned with the opening narration. '
       'Return a criterion result for every exact (beat_id,criterion) pair with specific visible evidence. passed=true only if ALL criteria pass and issues is empty. '
       'For each issue name its category (meaning/relation/layout/timing/unsupported), beat_id, object_ids, exact time, observed problem and actionable fix. '
       'Meaning errors must go back to storyboard; relation errors to the model; overlapping labels to layout; pacing errors to timeline. '

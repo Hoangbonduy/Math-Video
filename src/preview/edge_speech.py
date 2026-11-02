@@ -1,10 +1,68 @@
 """Microsoft Edge online Vietnamese speech, no user API key or FPT fallback."""
 import asyncio,hashlib,math,time,uuid
+import array,sys,wave
 from pathlib import Path
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
 from src.shared.job_session import _json_bytes
 from src.shared.media_tools import binary,run,duration
+
+
+TRIM_VERSION = 1
+MAX_TRIM_SECONDS = .35
+KEEP_LEAD_SECONDS = .04
+KEEP_TAIL_SECONDS = .08
+
+
+def _trim_cached(root, source):
+    """Derive speech from immutable raw WAV; remove at most .35 s at its edges."""
+    identity = dict(source=source['sha256'], source_key=source.get('key', source['path']), version=TRIM_VERSION,
+                    maximum=MAX_TRIM_SECONDS, lead=KEEP_LEAD_SECONDS,
+                    tail=KEEP_TAIL_SECONDS, threshold_db=-45, minimum_silence=.05)
+    key = hashlib.sha256(_json_bytes(identity)).hexdigest()
+    directory = root/'generation/checkpoint_7/edge_trimmed'
+    directory.mkdir(parents=True, exist_ok=True)
+    output, meta = directory/(key+'.wav'), directory/(key+'.json')
+    if meta.exists():
+        cached = store.read_json(meta)
+        if not output.is_file() or store.digest(output) != cached['sha256']:
+            raise WorkflowError('CACHE_CORRUPT', 'Processed Edge speech changed.')
+        return cached
+    with wave.open(str(store.project_path(root, source['path'])), 'rb') as wav:
+        params = wav.getparams()
+        if params.nchannels != 1 or params.sampwidth != 2 or params.comptype != 'NONE':
+            raise WorkflowError('TTS_AUDIO', 'Edge speech must be mono PCM16 WAV.')
+        frames = wav.readframes(wav.getnframes())
+    samples = array.array('h', frames)
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    threshold = 32768 * 10**(-45/20)
+    first = next((i for i, value in enumerate(samples) if abs(value) > threshold), None)
+    left = right = 0
+    if first is not None:
+        last = next(i for i in range(len(samples)-1, -1, -1) if abs(samples[i]) > threshold)
+        lead, tail = first, len(samples)-1-last
+        minimum = math.ceil(.05*params.framerate)
+        available_lead = max(0, lead-round(KEEP_LEAD_SECONDS*params.framerate)) if lead >= minimum else 0
+        available_tail = max(0, tail-round(KEEP_TAIL_SECONDS*params.framerate)) if tail >= minimum else 0
+        budget = math.floor(MAX_TRIM_SECONDS*params.framerate)
+        # Prefer tail silence so the consonant onset keeps its original breathing room.
+        right = min(budget, available_tail)
+        left = min(budget-right, available_lead)
+    temporary = output.with_suffix('.partial.wav')
+    try:
+        with wave.open(str(temporary), 'wb') as wav:
+            wav.setparams(params)
+            wav.writeframes(frames[left*2:(len(samples)-right)*2])
+        temporary.replace(output)
+        result = dict(source, path=str(output.relative_to(root)), sha256=store.digest(output),
+                      duration=(len(samples)-left-right)/params.framerate,
+                      trim_version=TRIM_VERSION, trim_source_sha256=source['sha256'],
+                      untrimmed_path=source['path'], trimmed_seconds=(left+right)/params.framerate)
+        store.atomic_write(meta, result)
+        return result
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 async def _download(text,voice,rate,path,boundary='WordBoundary'):
@@ -79,7 +137,7 @@ def synthesize(root,text,config,retry_uncertain=None):
         cached=store.read_json(meta)
         if cached.get('status')=='complete':
             if not path.is_file() or store.digest(path)!=cached['sha256']:raise WorkflowError('CACHE_CORRUPT','Giọng Microsoft đã lưu bị thay đổi; chưa gửi lại yêu cầu.')
-            return cached
+            return _trim_cached(root,cached)
     previous=next((c for c in reversed(ledger['calls']) if c['key']==key),None)
     if previous and previous['status'] in ('in_flight','uncertain') and retry_uncertain!=previous['id']:
         raise WorkflowError('TTS_RESULT_UNKNOWN','Lượt giọng Microsoft chưa rõ kết quả. Chọn tiếp tục lượt đó trước khi gửi lại.')
@@ -97,7 +155,7 @@ def synthesize(root,text,config,retry_uncertain=None):
         temporary.replace(path)
         result=dict(status='complete',provider='edge',voice=config['voice'],boundary=call['boundary'],path=str(path.relative_to(root)),sha256=store.digest(path),duration=seconds,text=text,key=key)
         store.atomic_write(meta,result);call['status']='complete';call['completed_epoch']=time.time();call.pop('error',None);call.pop('error_code',None);store.atomic_write(ledger_path,ledger)
-        return result
+        return _trim_cached(root,result)
     except Exception as exc:
         code,message,_=_failure(exc)
         call.update(status='failed',completed_epoch=time.time(),error=call.get('error',type(exc).__name__),error_code=code);store.atomic_write(ledger_path,ledger)

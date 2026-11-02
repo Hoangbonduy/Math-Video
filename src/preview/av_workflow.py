@@ -9,6 +9,7 @@ from src.shared import workflow as wf
 from src.preview import audio
 from src.preview import export
 from src.preview import music
+from src.preview import pacing
 from src.shared._workflow_store import WorkflowError
 from src.shared.job_session import _job_lock, _json_bytes, Session, _used
 from src.scene_design.scene_generation import _clip, _bundle
@@ -115,6 +116,23 @@ def configure(project_dir,values):
             p['audio_config']=config;wf._save(root,p,reviews)
 
 
+def _sample_source(root, project, scene_id):
+    from src.preview.continuous_preview import scene_source
+    try:
+        source = scene_source(root, project, scene_id)
+    except WorkflowError as exc:
+        if exc.code != 'PREVIEW_INPUT':
+            raise
+        # Listening is available before visuals exist, with the same speech rules.
+        design = wf._latest(project, 'scene_design', scene_id)
+        if design:
+            wf._verify(root, design)
+        return dict(storyboard=pacing.storyboard_reference(root, design)) if design else {}
+    for item in (source['design'], source['clip']):
+        wf._verify(root, item)
+    return source
+
+
 def sample(project_dir,retry_uncertain=None):
     with _job_lock(Path(project_dir).resolve()):
         with store.locked_project(project_dir) as root:
@@ -125,11 +143,32 @@ def sample(project_dir,retry_uncertain=None):
             wf._verify(root,script)
             if 'script.json' not in script.get('bundle',{}): raise WorkflowError('STRUCTURED_SCRIPT_REQUIRED','Voice synthesis needs the approved C4 structured narration')
             config=audio.settings(root)
-            payload=store.read_json(root/script['bundle']['script.json']['path']);text=audio.chunks(payload['script']['scenes'][0]['narration'])[0]
-        result=SYNTHESIZER(root,text,config,retry_uncertain)
+            payload=store.read_json(root/script['bundle']['script.json']['path'])
+            scene=payload['script']['scenes'][0]
+            source=_sample_source(root,p,scene['scene_id'])
+        from src.preview.continuous_preview import _seconds, FPS
+        seconds=math.ceil(_seconds(root/source['clip']['path'])*FPS-1e-4)/FPS if source.get('clip') else None
+        prepared=pacing.prepare(root,source,scene['narration'],config,SYNTHESIZER,seconds,FPS,retry_uncertain)
+        identity=dict(config={k:config[k] for k in ('provider','voice','speed')},source=source,
+                      prepared=prepared,pacing_version=pacing.VERSION)
+        key=hashlib.sha256(_json_bytes(identity)).hexdigest()
+        directory=root/'generation/voice_samples'/key
+        directory.mkdir(parents=True,exist_ok=True)
+        output=directory/'sample.wav'
+        meta=directory/'result.json'
+        if meta.exists():
+            result=store.read_json(meta)
+            if not output.is_file() or store.digest(output)!=result['sha256']:
+                raise WorkflowError('CACHE_CORRUPT','Bản nghe thử đã bị thay đổi.')
+        else:
+            pacing.speech_track(root,prepared['segments'],output,prepared['duration'])
+            result=dict(path=str(output.relative_to(root)),sha256=store.digest(output),
+                        duration=prepared['duration'],text=scene['narration'],scene_id=scene['scene_id'],
+                        segments=prepared['segments'],pacing_version=pacing.VERSION,status='complete')
+            store.atomic_write(meta,result)
         with store.locked_project(root):
             p,reviews=wf._load(root)
-            if audio.settings(root)!=config or wf._latest(p,'script',None)!=script: raise WorkflowError('STALE_JOB','Voice sample inputs changed')
+            if audio.settings(root)!=config or wf._latest(p,'script',None)!=script or _sample_source(root,p,scene['scene_id'])!=source: raise WorkflowError('STALE_JOB','Voice sample inputs changed')
             p['voice_sample']=dict(result,config=config);wf._save(root,p,reviews)
         return result
 
@@ -190,7 +229,7 @@ def generate(project_dir,scene_id=None,retry_uncertain=None):
                 sc=next(s for s in script_payload['script']['scenes'] if s['scene_id']==sid)
                 design=store.read_json(root/inputs['design']['path']);version=wf._next_version(p,'scene_av',sid)
                 feedback=wf._request(reviews,base)['feedback'] if base else None
-            fingerprint=dict(inputs=inputs,version=version,feedback=feedback)
+            fingerprint=dict(inputs=inputs,version=version,feedback=feedback,pacing_version=pacing.VERSION,speech_processing_version=audio.processing_version(config))
             key=hashlib.sha256(_json_bytes(fingerprint)).hexdigest()[:20];directory=root/BASE/'jobs'/key;directory.mkdir(parents=True,exist_ok=True)
             job_path=directory/'job.json'
             job=store.read_json(job_path) if job_path.exists() else dict(job_id='c7_'+key,input=fingerprint,status='working',calls=[])
@@ -216,12 +255,13 @@ def generate(project_dir,scene_id=None,retry_uncertain=None):
                     font_size=result['subtitle_font_size']
                     if result['kind']=='pronunciation': spoken=result['spoken']
                     elif result['spoken']!=texts: raise WorkflowError('INVALID_FEEDBACK_PLAN','Narration changed outside a pronunciation correction')
-                segments=[];offset=.15
+                segments=[]
                 for text,speech in zip(texts,spoken):
-                    ref=SYNTHESIZER(root,speech,config,retry_uncertain);segments.append(dict(text=text,start=offset,end=offset+ref['duration'],audio=ref));offset+=ref['duration']
-                seconds=math.ceil((offset+.15)*30)/30
+                    ref=SYNTHESIZER(root,speech,config,retry_uncertain)
+                    segments.append(dict(text=text,audio=ref))
+                seconds=math.ceil((pacing.schedule(segments)+pacing.TAIL_SECONDS)*30-1e-6)/30
                 joined=directory/'narration.wav'
-                if not joined.exists(): export.concat_audio([root/s['audio']['path'] for s in segments],joined,seconds)
+                if not joined.exists(): pacing.speech_track(root,segments,joined,seconds)
                 captions=directory/'captions.srt';export.srt(segments,captions,font_size,resolution=final_resolution(p))
                 session=Session(directory,job,CLIENT_FACTORY(),retry_uncertain if any(c['call_id']==retry_uncertain for c in job['calls']) else None,budget_usd=.5,other_used=spent(root)-_used(job))
                 if 'pricing' not in job: job['pricing']=session.client.preflight(search=False);session.save()

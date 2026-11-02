@@ -19,7 +19,13 @@ from src.shared.job_session import _json_bytes
 VERSION=2
 MAX_REPAIRS=3
 MAX_REQUESTS=24
-PATCH_SCHEMA=_object(dict(label_offsets=contract.array(_object(dict(id=contract.S,offset_x=contract.N,offset_y=contract.N)),0,50),layout=contract.array(_object(dict(id=contract.S,x=contract.N,y=contract.N,width=contract.N,height=contract.N)),0,60),timeline=contract.array(contract.BEAT,0,80),parameter_tracks=contract.array(contract.PARAM_TRACK,0,32)))
+PATCH_SCHEMA = _object(dict(
+    label_offsets=contract.array(_object(dict(id=contract.S, offset_x=contract.N, offset_y=contract.N)), 0, 50),
+    layout=contract.array(_object(dict(id=contract.S, x=contract.N, y=contract.N, width=contract.N, height=contract.N)), 0, 60),
+    colors=contract.array(_object(dict(id=contract.S, color=dict(type='string', pattern='^#[0-9a-fA-F]{6}$'))), 0, 60),
+    timeline=contract.array(contract.BEAT, 0, 80),
+    parameter_tracks=contract.array(contract.PARAM_TRACK, 0, 32)
+))
 
 
 def _messages(instruction,context):
@@ -43,6 +49,8 @@ def _ask(session,phase,instruction,context,schema):
 
 def _story(session,context,index,previous,issues):
     instruction=('Create an explanatory storyboard for the supplied scene within the approved script. Preserve scene_id, narration and duration=target_seconds EXACTLY. '
+      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within [0.0s, 0.8s] '
+      'that directly embodies the opening narration (for example: folding a sheet, changing thickness, or sweeping a parameter on a curve). Never leave the opening second static. '
       'Divide the original narration into 1..8 consecutive verbatim excerpts covering it exactly. Beats must cover [0,target_seconds] with no gaps or overlaps. '
       'For each beat state what the viewer must SEE, how it MOVES, what they should UNDERSTAND and 1..6 specific visually testable criteria. '
       'Use only renderer capabilities and templates supplied. Explain one coherent visual relationship, not a list of disconnected shapes or decorative labels. '
@@ -56,13 +64,43 @@ def _story(session,context,index,previous,issues):
         instruction += (' USER FEEDBACK TO FIX: The reviewer gave feedback: "'
                         + str(context['feedback'])
                         + '". You MUST revise the storyboard to directly fulfill and fix this feedback.')
+    if context.get('is_opening_scene'):
+        instruction += (
+            ' OPENING HOOK REQUIREMENT: This is the opening scene of the video. '
+            'Isolate the opening hook question or surprising situation into a concise beat_01 (at most 40 words). '
+            'beat_01 MUST immediately show a concrete visual situation/comparison at t=0 and animate it within the first second so the viewer grasps the core question right away.'
+        )
     prev_story = previous or context.get('previous_storyboard')
     result=_ask(session,f'v2_storyboard_{index}',instruction,dict(context,previous_storyboard=prev_story,issues=issues,renderer_capabilities=contract.CAPABILITIES,templates=contract.TEMPLATES),contract.STORY_SCHEMA)
-    return contract.validate_story(result,context['scene'],context['target_seconds'])
+    return contract.validate_story(result, context['scene'], context['target_seconds'], is_opening_scene=bool(context.get('is_opening_scene')))
+
+
+def _topic_specific_rules(context, story):
+    corpus = ' '.join([
+        str(context.get('scene', {}).get('narration', '')),
+        str(context.get('brief', '')),
+        json.dumps(story, ensure_ascii=False) if story else ''
+    ]).lower()
+    vehicle_keywords = ('radar', 'cảnh sát', 'bắn tốc độ', 'đồng hồ tốc độ',
+                        'speedometer', 'sóng phản xạ', 'doppler')
+    if any(k in corpus for k in vehicle_keywords):
+        return (
+            'TOPIC-SPECIFIC VEHICLE/RADAR RULES: '
+            'Bind a radar beam with line_through_points extent=segment from the radar OBJECT to the moving car_body OBJECT. '
+            'Use emitted_wave/reflected_wave IDs with height>=0.06. '
+            'Never place roadside observers (police officer, radar gun, signposts) on the same vertical y-band as a moving vehicle; '
+            'place road/car in y in [0.62,0.78] and roadside observer in y in [0.35,0.52]. '
+            'Group car_body, car_cabin, wheel_left and wheel_right coherently. '
+        )
+    return ''
 
 
 def _design(session,context,story,assets,index,previous,issues):
-    instruction=('Design this storyboard as a VERSION 2 relational scene using the exact supplied schema and renderer capabilities. '
+    instruction=('FIRST FRAME VISIBILITY: Display the main title or primary visual object immediately at t=0 '
+      '(do NOT attach an appear action with start > 0 to every object). Only animate appear for secondary elements introduced in subsequent beats. '
+      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within [0.0s, 0.8s] '
+      'that directly embodies the opening narration (for example: folding a sheet, changing thickness, or sweeping a parameter on a curve). Never leave the opening second static. '
+      'Design this storyboard as a VERSION 2 relational scene using the exact supplied schema and renderer capabilities. '
       'Preserve scene_id, narration, duration=target_seconds and aspect_ratio=config.render.resolution[0]/resolution[1]. schema_version=2. '
       'Choose one supplied template; construct it with supported primitives. Coordinates are normalized centers with y DOWN; graphs have mathematical coordinates with y UP. '
       'All IDs must be simple unique identifiers. Colors MUST use six hex digits, e.g. #888888, never #888. '
@@ -76,7 +114,7 @@ def _design(session,context,story,assets,index,previous,issues):
       'Bind label_follow to its point with normalized offsets; value_label expression may reference parameters or scalar binding IDs (line bindings expose slope). '
       'Animate ONLY the shared parameter for dependent geometry. Example: h decreases, point B uses a+h, secant uses A/B, numerical slope uses secant binding ID; do not independently move B or the line. '
       'Bindings have one target each. All unused string fields are empty, offsets=0, decimals=2, extent=segment unless full line is needed. '
-      'position binding target MUST be a single text/rectangle/circle/dot/image OBJECT ID, never a group, line, plot or graph. Use timeline move on a GROUP ID to translate an entire vehicle. '
+      'position binding target MUST be a single text/rectangle/circle/dot/image OBJECT ID, never a group, line, plot or graph. Use timeline move on a GROUP ID to translate a composite illustration. '
       'position expressions are ABSOLUTE center positions, not deltas. Example initial center x=.3: x_expression=.3+.1*t, y_expression=.6. '
       'binding.graph MUST reference graphs[].id (e.g. parabola_spec), never graphs[].object_id (e.g. curve_graph). tangent_line gets its graph from source_a. '
       'Related graph geometry must share its moving hierarchy. A line_through_points segment may join world-space endpoints from different groups; use OBJECT IDs, not group IDs. '
@@ -88,25 +126,14 @@ def _design(session,context,story,assets,index,previous,issues):
       'Keep all motion paths inside frame and labels apart. Use at most 20 objects, 4 groups, 4 parameters and 12 bindings unless essential. '
       'Use real available asset IDs only; never invent missing assets. fallback_note explains any resource absence. '
       'If correcting relation issues, repair the dependency model, do not hide it with independent paths. All storyboard criteria remain binding. '
-      'CRITICAL SCENE QUALITY RULES (SCENES 01-04): '
-      'Bind a radar beam with line_through_points extent=segment from the radar OBJECT to the moving car_body OBJECT. '
-      'Preserve explicit vertices for line/plot polylines. Use emitted_wave/reflected_wave IDs with height>=0.06; only unshaped waves receive decorative sine fallback. '
-      'Add explicit sequential highlight beats for distance, time and calculation within their narration windows. '
-      'Keep a car at its destination through the END of the completed-trip beat before resetting it. '
-      'Show Delta t markers in the same beat where boundary points first appear. Use outlined dots and readable sizes without changing mathematical positions. '
-      'LAYOUT ARCHITECTURE RULES FOR HIGH VISUAL CLARITY: '
-      '1. Never place roadside observers (police officer, radar gun, signposts) on the same vertical y-band as a moving vehicle. '
-      'If road and car occupy y in [0.62,0.78], place officer/radar on an elevated sidewalk band y in [0.35,0.52] '
-      'or a separate left/top panel; aim the radar beam diagonally toward the car. '
-      '2. Group car_body (rectangle), car_cabin (rectangle above body), wheel_left and wheel_right (circles at bottom edges) coherently. '
-      '3. Reserve y in [0.06,0.18] for the Vietnamese title and a readout box in a clear corner, '
-      'e.g. x in [0.65,0.88], y in [0.22,0.36], so moving objects never cross text. '
-      '4. GRAPH & SECANT LABEL PLACEMENT: Keep labels outside the entire swept curve/secant/tangent and axes, never on a dot. '
-      'For convex upward curves such as x=t**3 at positive t, prefer BELOW-RIGHT of a point: x>=point_x+0.05, y>=point_y+0.04 (screen y increases down). '
-      'Use label_follow with positive offsets when appropriate and check the whole parameter range, not just one frame. '
-      '5. HIGHLIGHT MARGIN SAFETY: Text expands by 22% at highlight peak. Prefer static horizontal boxes within [0.04,0.94] '
-      'and verify the full expanded/rotated/group-transformed box remains within [0,1] on both axes. '
+      'GENERAL LAYOUT ARCHITECTURE RULES: '
+      '1. Separate stationary reference objects and moving objects into distinct vertical/horizontal bands so motion paths never collide. '
+      '2. Group all parts of a composite moving illustration so they translate/scale coherently. '
+      '3. Reserve y in [0.06,0.18] for the Vietnamese title and a separate corner panel for numeric readouts so moving shapes never cross text. '
+      '4. GRAPH & SECANT LABEL PLACEMENT: Keep labels on the exterior side of swept curves/secants/tangents and axes, never on a dot. '
+      '5. HIGHLIGHT MARGIN SAFETY: Text expands by 22% at highlight peak; keep static horizontal boxes within [0.04,0.94]. '
       'Only declare overlap_with for visually intentional overlays, never to hide unreadable text.')
+    instruction += _topic_specific_rules(context, story)
     if context.get('feedback'):
         instruction += (' USER FEEDBACK TO FIX: The reviewer requested changes: "'
                         + str(context['feedback'])
@@ -124,7 +151,7 @@ def _patch(session,context,story,design,index,issues):
     categories={i['category'] for i in issues}
     instruction=('Repair ONLY the indicated layout/timing problem in the current relational scene. Return layout entries for objects needing position/size changes, '
       'label_offsets entries only for label_follow relations whose offsets need changing, and the COMPLETE timeline and parameter_tracks copied unchanged unless category timing is present. '
-      'Do not alter labels, colors, expressions, relations, grouping, narration, duration or storyboard. '
+      'Return colors entries ONLY when fixing readability or contrast issues in category layout. Do not alter expressions, relations, grouping, narration, duration or storyboard. '
       'If only timing is present, layout must be empty. If only layout is present, timeline/parameter_tracks must be identical. '
       'Fix actual readability and motion, not the acceptance criteria. Keep the same input duration. '
       'When moving a text label away from a secant, tangent, curve or axes, use the exterior side of the whole swept path '
@@ -135,10 +162,16 @@ def _patch(session,context,story,design,index,issues):
     patch=_ask(session,f'v2_patch_{index}',instruction,dict(scene=context['scene'],target_seconds=context['target_seconds'],storyboard=story,design=design,issues=issues),PATCH_SCHEMA)
     contract.structure(patch,PATCH_SCHEMA,'repair')
     result=copy.deepcopy(design);objects={o['id']:o for o in result['objects']}
-    if 'layout' not in categories and (patch['layout'] or patch['label_offsets']):raise WorkflowError('INVALID_SCENE_DESIGN','Timing repair cannot change layout')
+    if 'layout' not in categories and (patch['layout'] or patch['label_offsets'] or patch['colors']):
+        raise WorkflowError('INVALID_SCENE_DESIGN', 'Timing repair cannot change layout or colors')
     for entry in patch['layout']:
-        if entry['id'] not in objects:raise WorkflowError('INVALID_SCENE_DESIGN','Unknown layout repair target')
-        objects[entry['id']].update({key:entry[key] for key in ('x','y','width','height')})
+        if entry['id'] not in objects:
+            raise WorkflowError('INVALID_SCENE_DESIGN', 'Unknown layout repair target')
+        objects[entry['id']].update({key: entry[key] for key in ('x', 'y', 'width', 'height')})
+    for entry in patch['colors']:
+        if entry['id'] not in objects:
+            raise WorkflowError('INVALID_SCENE_DESIGN', 'Unknown color repair target')
+        objects[entry['id']]['color'] = entry['color']
     relations={b['id']:b for b in result['bindings']}
     for entry in patch['label_offsets']:
         if entry['id'] not in relations or relations[entry['id']]['kind']!='label_follow':raise WorkflowError('INVALID_SCENE_DESIGN','Layout offsets can only target label_follow')
@@ -210,7 +243,7 @@ def _pre_render(session,context,story,design,assets,index,work):
         _write(stage/'design.json',design)
         _write(work/'design.json',design,allow_overwrite=True)
         _progress(session,'checking_relations',index)
-        plan=contract.compile_design(design,context['scene'],context['target_seconds'],assets['assets'])
+        plan = contract.compile_design(design, context['scene'], context['target_seconds'], assets['assets'], background=context['config']['background'])
         if abs(plan['aspect']-context['config']['render']['resolution'][0]/context['config']['render']['resolution'][1])>1e-6:
             raise WorkflowError('INVALID_SCENE_DESIGN','aspect_ratio must match project format')
         times=contract.important_times(design,story)

@@ -18,7 +18,7 @@ def wrap(text,font_size=44,max_width=1720):
         if font.getlength(candidate)>max_width:
             lines.append(word)
         else: lines[-1]=candidate
-    if len(lines)>2 or any(font.getlength(line)>max_width for line in lines): raise WorkflowError('SUBTITLE_LAYOUT','Subtitle does not fit two lines; shorten the speech segment')
+    if len(lines)>3 or any(font.getlength(line)>max_width for line in lines): raise WorkflowError('SUBTITLE_LAYOUT','Subtitle does not fit; shorten the speech segment')
     return '\n'.join(lines)
 
 
