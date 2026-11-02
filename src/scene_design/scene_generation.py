@@ -35,11 +35,14 @@ def _jobs(root):
 
 
 def summary(root):
+    from src.scene_design.scene_drafts import _register_reviewable
+    _register_reviewable(root)
     jobs=_jobs(root)
     project=store.read_json(root/'project.json')
     script=next((a for a in reversed(project['artifacts']) if a['stage']=='script' and not a.get('invalidated')), {})
     def current(job):
-        return (job['input'].get('model',get_model())==get_model() and
+        return (job.get('status')!='cancelled' and
+                job['input'].get('model',get_model())==get_model() and
                 job['input'].get('script_sha256',script.get('sha256'))==script.get('sha256'))
     result = dict(model=get_model(),budget_usd=BUDGET,budget_used_usd=sum(_used(j) for j in jobs),
                 jobs=[dict(job_id=j['job_id'],stage=j['input']['stage'],scene_id=j['input']['scene_id'],status=j['status'],
@@ -289,6 +292,16 @@ def resume_input(jobs, fingerprint, attempt_id):
     return fingerprint
 
 
+def fresh_after_cancelled(jobs, fingerprint):
+    # Retain billing history but give a reset scene a stable new cache key.
+    if 'attempt_id' not in fingerprint:
+        prior=next((j for j in reversed(jobs)
+                    if j['status']=='cancelled' and j['input']==fingerprint),None)
+        if prior:
+            return dict(fingerprint,attempt_id='reset-'+prior['job_id'])
+    return fingerprint
+
+
 def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=False, attempt_id=None, auto_continue=False):
     from src.shared import workflow as wf
     from src.scene_design.manim_runtime import info as runtime_info
@@ -350,11 +363,12 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     raise WorkflowError('STRUCTURED_CLIP_REQUIRED','AI revision requires the existing clip source bundle')
                 fingerprint=dict(stage=stage,scene_id=target,version=version,script_version=script['version'],script_sha256=script['sha256'],
                     script_bundle=script['bundle'],base_version=base['version'] if base else None,base_sha256=base['sha256'] if base else None,feedback=feedback,
-                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=2,design_prompt_version=6,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION==2 else {}))
+                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=2,design_prompt_version=7,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION==2 else {}))
                 if subscription_billing():fingerprint['ai_backend']=get_backend()
                 if trial_mode: fingerprint.update(trial_mode=True,max_repairs=repairs)
                 if attempt_id: fingerprint['attempt_id']=attempt_id
-                fingerprint=resume_input(_jobs(root),fingerprint,attempt_id)
+                jobs=_jobs(root)
+                fingerprint=fresh_after_cancelled(jobs,resume_input(jobs,fingerprint,attempt_id))
                 prefix=stage+'_'+target+'_'+version
                 for existing in _jobs(root):
                     if existing['input']['stage']==stage and existing['input']['scene_id']==target and existing['input']['version']==version and existing['input']!=fingerprint:
@@ -446,7 +460,7 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                 source,extra=(_design if stage=='scene_design' else _clip)(root,directory,session,context)
                 _write(directory,'generation.json',dict(input=fingerprint,calls=job['calls']))
                 paths=[root/'scene_config.json']+[p for p in directory.rglob('*') if p.is_file() and p.name!='job.json' and not p.name.startswith('code_error')]
-                assets=store.read_json(directory/'assets.json') if stage=='scene_design' else context['assets']
+                assets=store.read_json(Path(source).parent/'assets.json') if stage=='scene_design' else context['assets']
                 for asset in assets['assets']: paths += [root/asset['path'],root/asset['evidence_path']]
                 if design: paths += [root/c['path'] for c in design['bundle'].values()]+[root/design['path'],root/extra['code_path'],Path(source).with_name(Path(source).stem+'.mp4')]
                 if extra.get('manim_render'):

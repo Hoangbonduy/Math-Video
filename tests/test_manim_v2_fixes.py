@@ -73,12 +73,17 @@ class BindingCollisionTests(unittest.TestCase):
 
     def test_background_tokens_do_not_hide_roadside_officer(self):
         d=vehicle()
-        d['objects'].append(obj('road_surface','rectangle',.5,.56,.7,.12))
+        road=obj('road_surface','rectangle',.5,.56,.7,.12)
+        d['objects'].append(road)
+        # A surface is an intentional layer only when explicitly declared.
+        self.assertFalse(contract.motion_report(contract.compile_design(d))['passed'])
+        road['overlap_with']=['body','wheel1','wheel2']
         self.assertTrue(contract.motion_report(contract.compile_design(d))['passed'])
         d['objects'].append(obj('roadside_officer','rectangle',.55,.5,.06,.10))
         issues=contract.motion_report(contract.compile_design(d))['issues']
         self.assertTrue(any('roadside_officer' in i['object_ids'] for i in issues))
         d['objects'].pop()
+        road['overlap_with']=[]
         d['timeline'].append(dict(object_id='road_surface',action='move',start=0,duration=3,dx=.01,dy=0,value=0,easing='linear'))
         self.assertFalse(contract.motion_report(contract.compile_design(d))['passed'])
 
@@ -142,6 +147,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(len(f.router.stories),1)
         self.assertEqual(store.read_json(f.directory/'round_00/result.json')['issues'][0]['category'],'unsupported')
 
+    # Exercise terminal failure when no reviewable draft is available.
+    @patch('src.scene_design.scene_pipeline.reviewable_draft',new=lambda *args:None)
     def test_terminal_unsupported_persists_issues_and_does_not_repeat_requests(self):
         f=self.flow;f.vision.reviews=[[self.issue]]
         with self.assertRaisesRegex(store.WorkflowError,'SCENE_CAPABILITY_MISSING'):self.generate()

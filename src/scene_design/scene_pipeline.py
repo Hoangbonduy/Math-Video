@@ -58,8 +58,8 @@ def _story(session,context,index,previous,issues):
       'No speech synthesis or script rewriting. For meaning feedback, repair the explanatory plan before design. '
       'Beat IDs must be simple unique identifiers beat_01, beat_02, etc.; never encode timing JSON in an ID. '
       'required_capabilities must enumerate the capabilities needed for the proposed motion. '
-      'Prefer a simple plan with at most 3 beats and 8 total criteria. Use group timeline move for a vehicle, not a position binding on a group. '
-      'Avoid camera zoom and complex dial mechanisms unless essential. The renderer rotates an object about its center, not an endpoint.')
+      'Prefer a simple plan with at most 3 beats and 8 total criteria. Use group timeline transforms for a composite illustration; position bindings target single objects. '
+      'Avoid unsupported camera effects or mechanisms; choose complexity only when essential to the explanation. The renderer rotates an object about its center, not an endpoint.')
     if context.get('feedback'):
         instruction += (' USER FEEDBACK TO FIX: The reviewer gave feedback: "'
                         + str(context['feedback'])
@@ -75,24 +75,20 @@ def _story(session,context,index,previous,issues):
     return contract.validate_story(result, context['scene'], context['target_seconds'], is_opening_scene=bool(context.get('is_opening_scene')))
 
 
-def _topic_specific_rules(context, story):
-    corpus = ' '.join([
-        str(context.get('scene', {}).get('narration', '')),
-        str(context.get('brief', '')),
-        json.dumps(story, ensure_ascii=False) if story else ''
-    ]).lower()
-    vehicle_keywords = ('radar', 'cảnh sát', 'bắn tốc độ', 'đồng hồ tốc độ',
-                        'speedometer', 'sóng phản xạ', 'doppler')
-    if any(k in corpus for k in vehicle_keywords):
-        return (
-            'TOPIC-SPECIFIC VEHICLE/RADAR RULES: '
-            'Bind a radar beam with line_through_points extent=segment from the radar OBJECT to the moving car_body OBJECT. '
-            'Use emitted_wave/reflected_wave IDs with height>=0.06. '
-            'Never place roadside observers (police officer, radar gun, signposts) on the same vertical y-band as a moving vehicle; '
-            'place road/car in y in [0.62,0.78] and roadside observer in y in [0.35,0.52]. '
-            'Group car_body, car_cabin, wheel_left and wheel_right coherently. '
-        )
-    return ''
+def _relationship_rules():
+    """Describe renderer relationships without inferring a topic from keywords."""
+    return (
+        'RELATIONSHIP RULES: Choose the visual structure from the approved narration and storyboard. '
+        'Object IDs are identifiers, not declarations of semantic roles. '
+        'Use groups for components that must transform together. Parts that detach or move independently need their own tracks; '
+        'sharing an outer group does not authorize collisions during independent motion. '
+        'Use bindings for dependent geometry and labels; animate their shared source or parameter. '
+        'For intentional containment, layering or assembly, declare only the specific overlap_with object pairs. '
+        'This permission is scene-wide: if an overlap is allowed only at one moment, use visibility, grouping or a different path to avoid unwanted overlaps elsewhere. '
+        'Neither object names, large size nor geometric containment alone authorize overlap. '
+        'Keep independent objects and readable text clear throughout their swept paths. '
+        'Do not add subject-specific objects, fixed lanes or required IDs unless the storyboard calls for them. '
+    )
 
 
 def _design(session,context,story,assets,index,previous,issues):
@@ -106,8 +102,8 @@ def _design(session,context,story,assets,index,previous,issues):
       'All IDs must be simple unique identifiers. Colors MUST use six hex digits, e.g. #888888, never #888. '
       'Object points are LOCAL to its box, both coordinates [0,1]: horizontal line [[0,0.5],[1,0.5]], vertical line [[0.5,1],[0.5,0]]. '
       'Never put negative or signed Manim coordinates in points; use points=[] for non-path objects. '
-      'Each object has overlap_with=[] except intentional text overlays. Non-text labels should normally be empty; create separate text objects for readable labels. '
-      'Group the body, wheels and labels of a moving illustration so they move together. Group members can reference objects or groups, no cycles or multiple parents. '
+      'Use overlap_with=[] for unrelated objects. Declare specific intentional containment, layering or assembly pairs; never exempt unrelated collisions. Non-text labels should normally be empty; create separate text objects for readable labels. '
+      'Group components that form one coherent illustration so they transform together. Group members can reference objects or groups, no cycles or multiple parents. '
       'Use a graph object plus graph spec for mathematical curves. Bind point_on_graph using x_expression of a parameter; line_through_points uses source_a and source_b; tangent_line uses a point on graph. '
       'source_a/source_b must name OBJECT IDs, e.g. point_p; never use a binding ID such as p_on_curve there. '
       'A bound point may appear/fade/highlight; move/rotate/scale it only through its source parameter or shared group. '
@@ -127,13 +123,13 @@ def _design(session,context,story,assets,index,previous,issues):
       'Use real available asset IDs only; never invent missing assets. fallback_note explains any resource absence. '
       'If correcting relation issues, repair the dependency model, do not hide it with independent paths. All storyboard criteria remain binding. '
       'GENERAL LAYOUT ARCHITECTURE RULES: '
-      '1. Separate stationary reference objects and moving objects into distinct vertical/horizontal bands so motion paths never collide. '
+      '1. Choose layout and motion paths to preserve storyboard relationships, allowing intentional containment, layering and assembly through explicit overlap_with pairs. '
       '2. Group all parts of a composite moving illustration so they translate/scale coherently. '
-      '3. Reserve y in [0.06,0.18] for the Vietnamese title and a separate corner panel for numeric readouts so moving shapes never cross text. '
-      '4. GRAPH & SECANT LABEL PLACEMENT: Keep labels on the exterior side of swept curves/secants/tangents and axes, never on a dot. '
+      '3. Reserve readable space for any title or readouts the storyboard requires; choose their placement from the swept geometry rather than a fixed screen region. '
+      '4. Keep labels clear of the complete swept geometry, including paths, points and axes; use label_follow offsets for attached labels. '
       '5. HIGHLIGHT MARGIN SAFETY: Text expands by 22% at highlight peak; keep static horizontal boxes within [0.04,0.94]. '
       'Only declare overlap_with for visually intentional overlays, never to hide unreadable text.')
-    instruction += _topic_specific_rules(context, story)
+    instruction += _relationship_rules()
     if context.get('feedback'):
         instruction += (' USER FEEDBACK TO FIX: The reviewer requested changes: "'
                         + str(context['feedback'])
@@ -159,8 +155,26 @@ def _patch(session,context,story,design,index,issues):
       'Preserve point centers; offset labels instead of moving dots. Keep highlighted static text boxes within [0.04,0.94] horizontally '
       'and account for 22% expansion, group transforms and vertical frame edges. '
       'For label_follow targets change label_offsets rather than x/y, which the binding replaces.')
-    patch=_ask(session,f'v2_patch_{index}',instruction,dict(scene=context['scene'],target_seconds=context['target_seconds'],storyboard=story,design=design,issues=issues),PATCH_SCHEMA)
-    contract.structure(patch,PATCH_SCHEMA,'repair')
+    schema=copy.deepcopy(PATCH_SCHEMA)
+    collision_pairs={
+        frozenset(i['object_ids']) for i in issues
+        if i['category']=='layout' and 'collides with separate object' in i['problem']
+        and len(i['object_ids'])==2
+        and all(any(o['id']==oid and o['kind'] in ('rectangle','circle','image') for o in design['objects'])
+                for oid in i['object_ids'])
+    }
+    collision_repair=bool(collision_pairs)
+    if collision_repair:
+        schema['properties']['intentional_overlaps']=contract.array(_object(dict(
+            id=contract.S, overlap_with=contract.array(contract.S,0,20))),0,60)
+        schema['required'].append('intentional_overlaps')
+        instruction += (
+            ' Return intentional_overlaps entries only for semantically intended shape containment or assembly, '
+            'as justified by the storyboard. Each entry replaces that object overlap_with list; preserve existing exceptions. '
+            'Use only the reported shape pairs and specific object IDs, never blanket exemptions. Preserve the intended visual relationship. '
+            'Leave unintended collisions as layout problems and never exempt unreadable labels.')
+    patch=_ask(session,f'v2_patch_{index}',instruction,dict(scene=context['scene'],target_seconds=context['target_seconds'],storyboard=story,design=design,issues=issues),schema)
+    contract.structure(patch,schema,'repair')
     result=copy.deepcopy(design);objects={o['id']:o for o in result['objects']}
     if 'layout' not in categories and (patch['layout'] or patch['label_offsets'] or patch['colors']):
         raise WorkflowError('INVALID_SCENE_DESIGN', 'Timing repair cannot change layout or colors')
@@ -172,6 +186,16 @@ def _patch(session,context,story,design,index,issues):
         if entry['id'] not in objects:
             raise WorkflowError('INVALID_SCENE_DESIGN', 'Unknown color repair target')
         objects[entry['id']]['color'] = entry['color']
+    for entry in patch.get('intentional_overlaps',[]):
+        oid=entry['id']
+        if oid not in objects or any(other not in objects or other==oid for other in entry['overlap_with']):
+            raise WorkflowError('INVALID_SCENE_DESIGN','Unknown overlap repair target')
+        if len(set(entry['overlap_with']))!=len(entry['overlap_with']):
+            raise WorkflowError('INVALID_SCENE_DESIGN','Duplicate overlap repair target')
+        old=set(objects[oid]['overlap_with']);new=set(entry['overlap_with'])
+        if any(frozenset((oid,other)) not in collision_pairs for other in old ^ new):
+            raise WorkflowError('INVALID_SCENE_DESIGN','Overlap repair must target a reported shape collision')
+        objects[oid]['overlap_with']=entry['overlap_with']
     relations={b['id']:b for b in result['bindings']}
     for entry in patch['label_offsets']:
         if entry['id'] not in relations or relations[entry['id']]['kind']!='label_follow':raise WorkflowError('INVALID_SCENE_DESIGN','Layout offsets can only target label_follow')
@@ -218,6 +242,45 @@ def verify_quality(root,artifact):
 
 
 
+def reviewable_draft(root, directory, job):
+    """Publish a verified render for human review without claiming AI approval."""
+    from src.scene_design import scene_drafts, scene_generation as sg
+    root, directory = Path(root), Path(directory)
+    saved = job.get('draft')
+    if not saved:
+        return None
+    record_path = store.project_path(root, saved['path'])
+    if store.digest(record_path) != saved['sha256']:
+        raise WorkflowError('ARTIFACT_CHANGED', 'Bằng chứng bản nháp đã thay đổi.')
+    draft = store.read_json(record_path)
+    if draft['job_id'] != job['job_id'] or draft['input'] != job['input']:
+        raise WorkflowError('STALE_JOB', 'Bản nháp không thuộc lượt tạo cảnh này.')
+    scene_drafts.verify(root, draft)
+    for key in ('render_checks_path', 'motion_checks_path'):
+        if not store.read_json(store.project_path(root, draft[key]))['passed']:
+            raise WorkflowError('DRAFT_INVALID', 'Bản nháp chưa qua kiểm tra render và chuyển động.')
+    work = directory/'human_review'
+    work.mkdir(exist_ok=True)
+    design = store.read_json(store.project_path(root, draft['design_path']))
+    story = store.read_json(store.project_path(root, draft['storyboard_path']))
+    assets = store.read_json(directory/'v2_assets.json')
+    sg._design_files(work, design, assets, dict(schema_version=VERSION, datasets=design['graphs']))
+    _write(work/'assets.json', assets)
+    _write(work/'storyboard.json', story)
+    ref = draft['reference']
+    quality = dict(passed=False, pipeline_version=VERSION,
+        repairs=job.get('repair_round', 0), design_sha256=store.digest(work/'design.json'),
+        video_sha256=ref['sha256'], storyboard_sha256=store.digest(work/'storyboard.json'),
+        review_model=job.get('vision_pricing', {}).get('model', ''),
+        summary=(saved.get('review') or {}).get('summary') or 'Bản nháp cần được người dùng kiểm tra và duyệt.',
+        evidence_files=draft['files'], issues=job.get('quality_issues', []))
+    _write(work/'quality.json', quality)
+    return work/'design.json', dict(review_path=str((work/'design.md').relative_to(root)),
+        render_engine='manim', manim_render=ref, design_pipeline=VERSION, quality_passed=False,
+        quality_path=str((work/'quality.json').relative_to(root)),
+        storyboard_path=str((work/'storyboard.json').relative_to(root)))
+
+
 def repair_feedback(issues, index, max_repairs):
     """Keep immutable critic evidence; adapt a copy for a supported redesign."""
     feedback=copy.deepcopy(issues)
@@ -225,7 +288,7 @@ def repair_feedback(issues, index, max_repairs):
         for issue in feedback:
             if issue['category']=='unsupported':
                 issue['category']='relation'
-                issue['fix']=(issue.get('fix') or '')+' Rebuild within supported primitives; preserve wave points or use wave IDs, and keep every storyboard criterion.'
+                issue['fix']=(issue.get('fix') or '')+' Rebuild within supported primitives and explicit geometry or bindings; preserve every storyboard criterion.'
     return feedback
 
 
@@ -254,7 +317,12 @@ def _pre_render(session,context,story,design,assets,index,work):
             return design,checks,inner
         _progress(session,'repairing_layout',index)
         # Distinct phases for both inner repairs and the outer visual patch.
-        design=_patch(session,context,story,design,f'{index}_pre_{inner+1}',checks['issues'])
+        if inner and any('collides with separate object' in i['problem'] for i in checks['issues']):
+            # A persistent collision may require regrouping or a new motion path,
+            # which a layout-only patch cannot express.
+            design=_design(session,context,story,assets,f'{index}_pre_{inner+1}',design,checks['issues'])
+        else:
+            design=_patch(session,context,story,design,f'{index}_pre_{inner+1}',checks['issues'])
 
 
 def generate(root,directory,session,context):
@@ -271,6 +339,10 @@ def generate(root,directory,session,context):
             artifact=dict(sha256=store.digest(directory/'design.json'),quality_path=str(final.relative_to(root)),manim_render=ref)
             verify_quality(root,artifact)
             return directory/'design.json',dict(review_path=str(directory/'design.md'),render_engine='manim',manim_render=ref,design_pipeline=VERSION,quality_path=str(final.relative_to(root)),storyboard_path=str((directory/'storyboard.json').relative_to(root)))
+    if final.exists() and job.get('draft'):
+        candidate = reviewable_draft(root, directory, job)
+        if candidate:
+            return candidate
     # Metadata checks precede paid design calls; a text-only reviewer must not
     # quietly turn the visual quality gate into a JSON check.
     vision=scene_vision.CLIENT_FACTORY()
@@ -352,6 +424,9 @@ def generate(root,directory,session,context):
         if pre_render_failed and max_repairs>0:
             message=f'Dừng trước render sau 2 lần sửa nội bộ; chưa dùng hết {max_repairs} vòng sửa đánh giá hình. '
         code='SCENE_CAPABILITY_MISSING' if any(i['category']=='unsupported' for i in issues) else 'SCENE_QUALITY_FAILED'
+        candidate = reviewable_draft(root, directory, job)
+        if candidate:
+            return candidate
         raise WorkflowError(code,message+'Cảnh chưa đạt kiểm tra: '+summary[:600]+' Chi tiết đã lưu tại '+str(final.relative_to(root)))
     # Publish only a quality-approved candidate; never register the draft rounds.
     index=int(work.name.split('_')[-1]);ref=result['reference']

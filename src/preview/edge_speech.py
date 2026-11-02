@@ -1,6 +1,6 @@
 """Microsoft Edge online Vietnamese speech, no user API key or FPT fallback."""
 import asyncio,hashlib,math,time,uuid
-import array,sys,wave
+import array,json,re,sys,wave
 from pathlib import Path
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
@@ -12,6 +12,25 @@ TRIM_VERSION = 1
 MAX_TRIM_SECONDS = .35
 KEEP_LEAD_SECONDS = .04
 KEEP_TAIL_SECONDS = .08
+
+
+
+def _voice_log(event, **fields):
+    """Always flush voice diagnostics to the server terminal, including workers."""
+    record = dict(time=time.strftime('%Y-%m-%d %H:%M:%S'), event=event, **fields)
+    print('[voice.edge] ' + json.dumps(record, ensure_ascii=False, default=str), file=sys.stderr, flush=True)
+
+
+def _error_details(exc):
+    # HTTP exceptions can contain signed service URLs; keep the useful reason.
+    detail = re.sub(r"(?:https?|wss?)://[^\s'\"]+", '<url>', str(exc))[:1000]
+    result = dict(error=type(exc).__name__, detail=detail)
+    if getattr(exc, 'status', None) is not None:
+        result['http_status'] = exc.status
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None:
+        result['cause'] = type(cause).__name__
+    return result
 
 
 def _trim_cached(root, source):
@@ -68,21 +87,23 @@ def _trim_cached(root, source):
 async def _download(text,voice,rate,path,boundary='WordBoundary'):
     try:import edge_tts
     except ImportError:raise WorkflowError('TTS_CONFIGURATION','Cài edge-tts trong môi trường Python chạy app.') from None
+    # One synthesis attempt only. _with_retries owns backoff, metadata mode,
+    # and attempt accounting so the ledger matches the Communicate calls.
+    started = time.monotonic()
+    key = path.name.split('.')[0][:12]
+    _voice_log('download_start', key=key, library_version=getattr(edge_tts, '__version__', 'unknown'),
+               voice=voice, rate=rate, boundary=boundary, characters=len(text),
+               connect_timeout=15, receive_timeout=45)
     try:
         await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=boundary,connect_timeout=15,receive_timeout=45).save(str(path))
-        return
-    except Exception as exc:
-        if type(exc).__name__!='NoAudioReceived':raise
-    alt='SentenceBoundary' if boundary=='WordBoundary' else 'WordBoundary'
-    path.unlink(missing_ok=True)
-    try:
-        await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=alt,connect_timeout=15,receive_timeout=45).save(str(path))
-        return
-    except Exception as exc:
-        if type(exc).__name__!='NoAudioReceived':raise
-    await asyncio.sleep(1.5)
-    path.unlink(missing_ok=True)
-    await edge_tts.Communicate(text,voice=voice,rate=rate,boundary=alt,connect_timeout=15,receive_timeout=45).save(str(path))
+    except BaseException as exc:
+        _voice_log('download_error', key=key, boundary=boundary,
+                   elapsed_seconds=round(time.monotonic()-started, 3),
+                   audio_bytes=path.stat().st_size if path.exists() else 0, **_error_details(exc))
+        raise
+    _voice_log('download_complete', key=key, boundary=boundary,
+               elapsed_seconds=round(time.monotonic()-started, 3),
+               audio_bytes=path.stat().st_size if path.exists() else 0)
 
 
 def _failure(exc):
@@ -102,8 +123,10 @@ async def _with_retries(text,voice,rate,path,call):
     for attempt in range(3):
         path.unlink(missing_ok=True)
         call.update(attempts=attempt+1,boundary=boundary)
+        _voice_log('attempt_start', call_id=call['id'], key=call['key'][:12], attempt=attempt+1, maximum_attempts=3, boundary=boundary)
         try:
             await _download(text,voice,rate,path,boundary=boundary)
+            _voice_log('attempt_complete', call_id=call['id'], attempt=attempt+1, boundary=boundary)
             return
         except Exception as exc:
             if isinstance(exc,WorkflowError):raise
@@ -112,6 +135,7 @@ async def _with_retries(text,voice,rate,path,call):
             diag=dict(attempt=attempt+1,boundary=boundary,error=type(exc).__name__,code=code)
             if hasattr(exc,'status'):diag['status']=exc.status
             call.setdefault('attempt_diagnostics',[]).append(diag)
+            _voice_log('attempt_error', call_id=call['id'], attempt=attempt+1, boundary=boundary, code=code, retryable=retry, **_error_details(exc))
             if not retry or attempt==2:raise WorkflowError(code,message) from None
             # Nam Minh can return no audio for one metadata mode but work in
             # the other with the same text/voice. Never change the user's voice.
@@ -122,6 +146,7 @@ async def _with_retries(text,voice,rate,path,call):
                 try:delay=max(delay,float((getattr(exc,'headers',None) or {}).get('Retry-After',delay)))
                 except (ValueError,TypeError):pass
                 if delay>10:raise WorkflowError(code,message) from None
+            _voice_log('retry_wait', call_id=call['id'], next_attempt=attempt+2, next_boundary=boundary, delay_seconds=delay)
             await asyncio.sleep(delay)
 
 
@@ -132,32 +157,40 @@ def synthesize(root,text,config,retry_uncertain=None):
     text=' '.join(text.split())
     if not 3<=len(text)<=5000:raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
     key=hashlib.sha256(_json_bytes(dict(provider='edge',voice=config['voice'],speed=config['speed'],text=text,format='wav'))).hexdigest()
+    _voice_log('synthesize_start', key=key[:12], project=str(root), voice=config['voice'], speed=config['speed'], characters=len(text), text=text[:200])
     ledger=init_ledger(root);directory=root/'generation/checkpoint_7';path=directory/(key+'.wav');meta=directory/(key+'.json');ledger_path=directory/'ledger.json'
     if meta.exists():
         cached=store.read_json(meta)
         if cached.get('status')=='complete':
             if not path.is_file() or store.digest(path)!=cached['sha256']:raise WorkflowError('CACHE_CORRUPT','Giọng Microsoft đã lưu bị thay đổi; chưa gửi lại yêu cầu.')
+            _voice_log('cache_hit', key=key[:12], duration_seconds=cached['duration'], boundary=cached.get('boundary'))
             return _trim_cached(root,cached)
     previous=next((c for c in reversed(ledger['calls']) if c['key']==key),None)
     if previous and previous['status'] in ('in_flight','uncertain') and retry_uncertain!=previous['id']:
         raise WorkflowError('TTS_RESULT_UNKNOWN','Lượt giọng Microsoft chưa rõ kết quả. Chọn tiếp tục lượt đó trước khi gửi lại.')
     recent=max((c.get('completed_epoch') or c.get('started_epoch',0) for c in ledger.get('calls',[]) if c.get('provider')=='edge'),default=0)
     wait=max(0.0,recent+1.5-time.time())
-    if wait>0:time.sleep(min(wait,3.0))
+    if wait>0:
+        _voice_log('throttle_wait', key=key[:12], delay_seconds=round(min(wait,3.0),3))
+        time.sleep(min(wait,3.0))
     call=dict(id=uuid.uuid4().hex,key=key,provider='edge',status='in_flight',started_epoch=time.time(),characters=len(text),text=text,voice=config['voice'],speed=config['speed'],reserved_usd=None,cost_status='no_api_key',price=None,exchange_rate=None)
     ledger['calls'].append(call);store.atomic_write(ledger_path,ledger)
     mp3=directory/(key+'.download.mp3');temporary=directory/(key+'.partial.wav')
     try:
         asyncio.run(asyncio.wait_for(_with_retries(text,config['voice'],f"{config['speed']*10:+d}%",mp3,call),timeout=75))
+        _voice_log('convert_start', call_id=call['id'], audio_bytes=mp3.stat().st_size)
         run([binary('ffmpeg'),'-y','-v','error','-i',str(mp3),'-ar','48000','-ac','1',str(temporary)])
         seconds=duration(temporary)
         if not math.isfinite(seconds) or seconds<=0:raise WorkflowError('TTS_AUDIO','Microsoft chưa trả âm thanh hợp lệ.')
         temporary.replace(path)
         result=dict(status='complete',provider='edge',voice=config['voice'],boundary=call['boundary'],path=str(path.relative_to(root)),sha256=store.digest(path),duration=seconds,text=text,key=key)
         store.atomic_write(meta,result);call['status']='complete';call['completed_epoch']=time.time();call.pop('error',None);call.pop('error_code',None);store.atomic_write(ledger_path,ledger)
-        return _trim_cached(root,result)
+        trimmed = _trim_cached(root,result)
+        _voice_log('synthesize_complete', call_id=call['id'], key=key[:12], attempts=call['attempts'], boundary=call['boundary'], duration_seconds=round(trimmed['duration'],3))
+        return trimmed
     except Exception as exc:
         code,message,_=_failure(exc)
+        _voice_log('synthesize_error', call_id=call['id'], key=key[:12], attempts=call.get('attempts',0), code=code, **_error_details(exc))
         call.update(status='failed',completed_epoch=time.time(),error=call.get('error',type(exc).__name__),error_code=code);store.atomic_write(ledger_path,ledger)
         if isinstance(exc,WorkflowError):raise
         raise WorkflowError(code,message) from None

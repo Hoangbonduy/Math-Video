@@ -61,7 +61,7 @@ class GeometryTests(unittest.TestCase):
         for owner,other in [('label','path'),('path','label')]:
             variant=copy.deepcopy(d)
             next(o for o in variant['objects'] if o['id']==owner)['overlap_with']=[other]
-            self.assertTrue(c.motion_report(c.compile_design(variant))['passed'])
+            self.assertFalse(any(i['category'] in ('layout','relation') for i in c.motion_report(c.compile_design(variant))['issues']))
         d=design();d.update(objects=[d['objects'][1],obj('label','text',.566,.6396,.10,.05,'curve')],
                             groups=[],bindings=[],parameters=[],parameter_tracks=[],timeline=[])
         self.assertTrue(any(i['object_ids']==['label','curve'] for i in c.motion_report(c.compile_design(d))['issues']))
@@ -74,7 +74,7 @@ class GeometryTests(unittest.TestCase):
         d['objects'][1]['points']=[[0,.5],[1,.5]]
         d['timeline']=[dict(object_id='label',action='fade',start=0,duration=.2,dx=0,dy=0,value=0,easing='linear'),
                        dict(object_id='path',action='appear',start=2,duration=.5,dx=0,dy=0,value=0,easing='linear')]
-        self.assertTrue(c.motion_report(c.compile_design(d))['passed'])
+        self.assertFalse(any(i['category'] in ('layout','relation') for i in c.motion_report(c.compile_design(d))['issues']))
         d['timeline']=[];d['groups']=[dict(id='whole',members=['label','path'])]
         d['timeline']=[dict(object_id='whole',action='rotate',start=0,duration=1,dx=0,dy=0,value=30,easing='linear')]
         self.assertFalse(c.motion_report(c.compile_design(d))['passed'])

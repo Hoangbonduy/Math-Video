@@ -54,7 +54,7 @@ class AutoContinueTests(unittest.TestCase):
                 wf.run_workflow(self.root,ai=True,scene_id='scene_1',auto_continue=True)
         self.assertEqual(len(sg._jobs(self.root)),1)
 
-    def test_one_http_continue_starts_sequence_and_duplicate_click_does_not_rerun(self):
+    def test_http_continue_only_starts_selected_scene_and_duplicate_click_does_not_rerun(self):
         with patch('src.shared.ai_config.scene_trial_enabled',return_value=True):
             server=ReviewServer(self.root,0)
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -67,11 +67,12 @@ class AutoContinueTests(unittest.TestCase):
         self.assertTrue(post()['ok'])
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
-            with server.jobs_lock:task=dict(server.jobs.get('workflow',{}))
+            with server.jobs_lock:task=dict(server.jobs.get('generate:scene_2',{}))
             if task.get('state') in ('done','failed'):break
             time.sleep(.05)
         self.assertEqual(task.get('state'),'done',task)
-        self.assertEqual([j['input']['scene_id'] for j in sg._jobs(self.root)],['scene_2','scene_3'])
+        self.assertEqual([j['input']['scene_id'] for j in sg._jobs(self.root)],['scene_2'])
+        self.assertNotIn('workflow',server.jobs)
         calls=len(self.flow.router.requests)
         self.assertTrue(post()['replayed'])
         self.assertEqual(len(self.flow.router.requests),calls)

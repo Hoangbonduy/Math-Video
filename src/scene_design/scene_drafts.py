@@ -1,4 +1,4 @@
-"""Inspectable rendered drafts; never workflow artifacts or review approvals."""
+"""Inspectable rendered drafts and recovery into pending human review."""
 from pathlib import Path
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
@@ -108,3 +108,69 @@ def recover_rendered(root):
             except (OSError,KeyError,ValueError,WorkflowError):
                 # A missing/corrupt render remains unavailable; never infer quality.
                 continue
+
+    _register_reviewable(root)
+
+
+def _register_reviewable(root):
+    """Recover saved failed renders into pending reviews; no generation calls.
+
+    Runs alongside recover_rendered under the caller's project access, just as
+    the existing recovery writes do. Recheck the base before submitting.
+    """
+    from src.shared import workflow as wf
+    from src.scene_design import scene_pipeline, scene_generation as sg
+    root = Path(root)
+    project, reviews = wf._load(root)
+    if project['stage'] != 'scene_design':
+        return
+    drafts = current(root)
+    script = wf._latest(project, 'script', None)
+    busy = {sid for revision in reviews.get('scene_revisions', [])
+            if revision.get('status') not in ('completed', 'cancelled')
+            for sid in revision.get('affected', [])}
+    changed = False
+    for sid, draft in drafts.items():
+        if draft['status'] != 'failed' or sid not in project['scene_ids'] or sid in busy:
+            continue
+        inputs = draft['input']
+        base = wf._latest(project, 'scene_design', sid)
+        if (inputs.get('script_version') != script['version']
+                or inputs.get('base_version') != (base['version'] if base else None)
+                or inputs.get('base_sha256') != (base['sha256'] if base else None)
+                or inputs.get('config') != sg._config(root)):
+            continue
+        if base and wf._request(reviews, base)['status'] != 'changes_requested':
+            continue
+        if inputs.get('version') != wf._next_version(project, 'scene_design', sid):
+            continue
+        directory = store.project_path(root, draft['record_path']).parent.parent
+        job_path = directory/'job.json'
+        try:
+            job = store.read_json(job_path)
+            if job['input'] != inputs or job['job_id'] != draft['job_id']:
+                continue
+            candidate = scene_pipeline.reviewable_draft(root, directory, job)
+            if not candidate:
+                continue
+            source, extra = candidate
+            paths = [p for p in source.parent.iterdir() if p.is_file()]
+            paths += [store.project_path(root, item['path']) for item in draft['files']]
+            paths.append(root/'scene_config.json')
+            assets = store.read_json(source.parent/'assets.json')
+            for asset in assets['assets']:
+                paths += [store.project_path(root, asset[k]) for k in ('path', 'evidence_path')]
+            bundle = sg._bundle(root, paths)
+            wf._submit(root, project, reviews, 'scene_design', inputs['version'], source, sid, None)
+            artifact = wf._latest(project, 'scene_design', sid)
+            artifact.update(origin='ai_scene', job_id=job['job_id'], bundle=bundle, **extra)
+            rendered = extra['manim_render']
+            reference = dict(rendered, render_version=rendered['version'], scene_id=sid,
+                             version=inputs['version'], design_sha256=artifact['sha256'])
+            project.setdefault('design_previews', {})[sid+':'+inputs['version']] = reference
+            changed = True
+        except (OSError, KeyError, ValueError, WorkflowError):
+            # Do not turn a stale or incomplete render into an approvable version.
+            continue
+    if changed:
+        wf._save(root, project, reviews)

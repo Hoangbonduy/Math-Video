@@ -27,7 +27,7 @@ TEMPLATES={
     'graph_relation':'A shared graph coordinate system, bound points/lines/labels and parameter-driven values.',
     'parameter_diagram':'One shared control parameter updates geometry and numerical labels.',
     'comparison':'Two clearly separated regions with matching scales and readable labels.'}
-IDENTIFIER=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_]*$',description='Unique identifier such as beat_01, car_body, or speed_value; no spaces or JSON.')
+IDENTIFIER=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_]*$',description='Unique identifier such as beat_01, shape_a, or measured_value; no spaces or JSON.')
 NORMALIZED=dict(type='number',minimum=0,maximum=1)
 STORY_BEAT=_object(dict(id=IDENTIFIER,start=N,end=N,narration_excerpt=S,show=S,motion=S,understand=S,criteria=array(S,1,6),required_capabilities=array(enum(*CAPABILITIES),0,14)))
 STORY_SCHEMA=_object(dict(scene_id=S,narration=S,duration=N,goal=S,visual_strategy=S,beats=array(STORY_BEAT,1,8)))
@@ -272,20 +272,23 @@ def motion_report(plan,fps=12,extra_times=()):
     def add(issue):
         key=(issue["category"],tuple(issue["object_ids"]),issue["problem"])
         if key not in seen: seen.add(key);issues.append(issue)
-    # Precompute independent moving pairs once, rather than scanning tracks
-    # for every pair at every sampled frame. Large layout backgrounds are excluded.
+    # Explicit hierarchy and transforms determine which parts move together.
+    # Names and box area never imply a background or a collision exemption.
     roots={oid:(plan['ancestors'][oid][-1] if plan['ancestors'][oid] else oid) for oid in plan['objects']}
     positioned={b['target'] for b in plan['bindings'] if b['kind']=='position'}
-    moving={oid:any(b['action']=='move' for node in [oid]+plan['ancestors'][oid]
-                    for b in plan['tracks'].get(node,[])) or oid in positioned for oid in plan['objects']}
+    transform_actions={'move','rotate','scale','highlight'}
+    motion_nodes={oid:frozenset(
+        node for node in [oid]+plan['ancestors'][oid]
+        if any(b['action'] in transform_actions for b in plan['tracks'].get(node,[]))
+        or node in positioned) for oid in plan['objects']}
+    moving={oid:bool(nodes) for oid,nodes in motion_nodes.items()}
     shapes=[oid for oid,obj in plan['objects'].items()
-            if obj['kind'] in ('rectangle','circle','image') and obj['width']*obj['height']<.16]
-    backgrounds={oid for oid in shapes
-                 if plan['objects'][oid]['kind']=='rectangle' and not moving[oid]
-                 and set(oid.lower().split('_')) & {'panel','road','card','screen','bg'}}
+            if obj['kind'] in ('rectangle','circle','image')]
+    # Check contrast against actual visible rectangles, independent of IDs.
+    backgrounds=[oid for oid,obj in plan['objects'].items() if obj['kind']=='rectangle']
     pairs=[(aid,bid) for i,aid in enumerate(shapes) for bid in shapes[i+1:]
-           if roots[aid]!=roots[bid] and (moving[aid] or moving[bid])
-           and aid not in backgrounds and bid not in backgrounds
+           if (roots[aid]!=roots[bid] or motion_nodes[aid]!=motion_nodes[bid])
+           and (moving[aid] or moving[bid])
            and bid not in plan['objects'][aid]['overlap_with']
            and aid not in plan['objects'][bid]['overlap_with']]
     paths=[oid for oid,obj in plan['objects'].items() if obj['kind'] in ('line','plot','graph')]
@@ -397,7 +400,7 @@ def motion_report(plan,fps=12,extra_times=()):
             if min(a[2],b[2])-max(a[0],b[0])>.015 and min(a[3],b[3])-max(a[1],b[1])>.015:
                 add(dict(category='layout',time=t,object_ids=[aid,bid],
                          problem=f'Moving object {aid} collides with separate object {bid}',
-                         fix='Separate vertical/horizontal lanes; place roadside observers above or below the moving vehicle lane.'))
+                         fix='Separate unintended motion paths. For storyboard-supported containment, layering or assembly, declare the specific object pair in overlap_with. Otherwise repair the path, geometry, visibility or grouping; keep labels readable.'))
         if len(issues)>=20:break
         if any(abs(t-x)<1e-5 for x in extra_times):samples.append(state)
     early_limit = min(1.2, plan['duration'] * 0.35)

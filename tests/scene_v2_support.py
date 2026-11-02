@@ -43,7 +43,8 @@ class DesignRouter(FakeRouter):
         elif 'schema_version' in props:
             sc=context['scene'];result=design(sc['scene_id'],sc['narration'],context['target_seconds']);self.design_requests.append(copy.deepcopy(context))
         elif 'layout' in props:
-            result=dict(label_offsets=[],layout=[],timeline=context['design']['timeline'],parameter_tracks=context['design']['parameter_tracks'])
+            result=dict(label_offsets=[],layout=[],colors=[],timeline=context['design']['timeline'],parameter_tracks=context['design']['parameter_tracks'])
+            if 'intentional_overlaps' in props:result['intentional_overlaps']=[]
         else:raise AssertionError('Unexpected design phase '+repr(props.keys()))
         return dict(id='design-'+str(len(self.requests)),model=get_model(),usage=dict(prompt_tokens=100,completion_tokens=100,cost=.0001),choices=[dict(finish_reason='stop',message=dict(content=json.dumps(result,ensure_ascii=False)))])
 

@@ -91,6 +91,8 @@ class PipelineTests(unittest.TestCase):
         calls=len(self.job['calls']);pipeline.generate(self.root,self.directory,self.session,self.context);self.assertEqual(len(self.job['calls']),calls)
         (self.root/extra['storyboard_path']).write_text('{}')
         with self.assertRaisesRegex(store.WorkflowError,'ARTIFACT_CHANGED'):pipeline.verify_quality(self.root,dict(sha256=store.digest(path),**extra))
+    # Exercise terminal failure when no reviewable draft is available.
+    @patch('src.scene_design.scene_pipeline.reviewable_draft',new=lambda *args:None)
     def test_max_three_repairs_never_publishes_failed_candidate(self):
         issue=dict(category='timing',beat_id='approach',object_ids=[],time=1,problem='Chuyển động quá nhanh.',fix='Kéo giãn nhịp trong thời lượng cảnh.')
         self.vision.reviews=[[issue]]
@@ -113,6 +115,8 @@ class PipelineTests(unittest.TestCase):
                 phases=[call['phase'] for call in job['calls']]
                 self.assertIn('v2_patch_1' if category=='layout' else 'v2_design_1',phases)
                 self.assertEqual(len(router.stories),1)
+    # Exercise terminal failure when no reviewable draft is available.
+    @patch('src.scene_design.scene_pipeline.reviewable_draft',new=lambda *args:None)
     def test_unsupported_stops_without_substitute_and_missing_vision(self):
         issue=dict(category='unsupported',beat_id='approach',object_ids=[],time=1,problem='Bộ dựng thiếu khả năng cần thiết.',fix='Bổ sung bộ dựng trước khi tiếp tục.')
         self.vision.reviews=[[issue]]

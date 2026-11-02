@@ -258,7 +258,7 @@ function render() {
   }
   if (['scene_design','scene_clip'].includes(state.stage)) {
     const retry=sceneJob(sid)?.status==='failed' || Boolean(state.scene_drafts?.[sid]);
-    const text=retry?'Chạy lại và tiếp tục các cảnh sau':'Tạo liên tiếp từ cảnh này';
+    const text=retry?'Chạy lại cảnh này':'Tạo cảnh này';
     button($('controls'),text,()=>action('continue',{scene_id:sid,new_attempt:retry}),'text-button').disabled=workflowBusy || manimRuntime?.available===false;
   }
   if(state.scene_generation?.codex_usage_limited){el('p','Lượt Codex mới nhất báo hết hạn mức. Đổi tài khoản Codex hoặc dựng lại thiết kế đã lưu.',$('controls'),'feedback-help');button($('controls'),'Đổi tài khoản Codex',openCodexAccount);}

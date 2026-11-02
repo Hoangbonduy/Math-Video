@@ -56,7 +56,7 @@ class ReviewServer(ThreadingHTTPServer):
 
     def continue_scenes(self, scene_id=None, retry_uncertain=None, attempt_id=None):
         stage=wf.get_status(self.root)['stage']
-        sequence=stage in ('scene_design','scene_clip') and not retry_uncertain
+        sequence=stage in ('scene_design','scene_clip') and scene_id is None and not retry_uncertain
         key='workflow' if sequence or not scene_id else 'generate:'+scene_id
         self.enqueue(key,lambda:wf.run_workflow(
             self.root,ai=True,scene_id=scene_id,retry_uncertain=retry_uncertain,

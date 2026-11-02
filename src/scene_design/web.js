@@ -35,7 +35,7 @@ function renderSceneProgress(artifact) {
   const job=sceneJob(sid),task=sceneTask(sid);
   const running=task && ['queued','working'].includes(task.state);
   const batchFailure=!job && sceneBatchFailure();
-  const failed=!running && (task?.state==='failed' || job?.status==='failed' || batchFailure);
+  const failed=!running && (task?.state==='failed' || job?.status==='failed' || artifact?.quality_passed===false || batchFailure);
   const draft=state.scene_drafts?.[sid];
   const rendered=artifact?.manim_render || state.design_previews?.[sid+':'+latest(sid,'scene_design')?.version] || draft?.reference;
   const ready=!running && !failed && rendered?.renderer==='manim';
@@ -80,7 +80,7 @@ function renderSceneProgress(artifact) {
       const number=String(state.scene_ids.indexOf(stopped.scene_id)+1).padStart(2,'0');
       el('p','Cảnh này chưa được tạo nên chưa có kết quả kiểm tra riêng. Lượt chạy trước đã dừng ở Cảnh '+number+'.',body);
     }
-    el('small','Chọn “Tạo liên tiếp từ cảnh này” một lần; các cảnh sau sẽ tự chạy theo thứ tự.',body);
+    el('small','Chọn “Tạo cảnh này” để tạo cảnh đang chọn.',body);
   }
 }
 function renderScenes() {
@@ -128,7 +128,7 @@ function renderViewer(artifact) {
   const viewer = $('viewer');
   const heading = el('div', undefined, viewer, 'viewer-heading');
   el('span', 'Cảnh ' + String(state.scene_ids.indexOf(sid) + 1).padStart(2, '0') + ' · ' + shortTitle(sid), heading);
-  const isFailedRun = sceneJob(sid)?.status === 'failed';
+  const isFailedRun = sceneJob(sid)?.status === 'failed' || artifact?.quality_passed === false;
   const draft = (!artifact || (isFailedRun && state.scene_drafts?.[sid])) ? state.scene_drafts?.[sid] : null;
   const reference = draft?.reference || (artifact?.stage === 'scene_design' && (state.design_previews?.[sid + ':' + artifact.version] || artifact.manim_render));
   const motion = reference?.renderer === 'manim' ? reference : null;
@@ -298,7 +298,7 @@ function renderDesignQuality(artifact,parent) {
   if (!artifact || artifact.design_pipeline !== 2) return;
   const panel=el('details',undefined,parent,'design-quality');
   el('summary','Storyboard và kết quả kiểm tra cảnh',panel);
-  el('p','Cảnh đã qua kiểm tra quan hệ trong chuyển động và AI đánh giá các khung hình. Bạn vẫn là người quyết định duyệt.',panel,'muted');
+  el('p',artifact.quality_passed === false ? 'Bản nháp đã render nhưng chưa đạt kiểm tra hình ảnh. Bạn có thể gửi góp ý hoặc tự kiểm tra và duyệt thiết kế.' : 'Cảnh đã qua kiểm tra quan hệ trong chuyển động và AI đánh giá các khung hình. Bạn vẫn là người quyết định duyệt.',panel,'muted');
   const content=el('div',undefined,panel);
   panel.addEventListener('toggle',async()=>{
     if(!panel.open || panel.dataset.loaded)return;
