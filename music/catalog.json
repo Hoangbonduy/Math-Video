@@ -1,0 +1,79 @@
+{
+  "tracks": [
+    {
+      "id": "relaxation-05",
+      "title": "Relaxation 05",
+      "artist": "Lily J",
+      "filename": "relaxation-05.mp3",
+      "source_url": "https://assets.mixkit.co/music/749/749.mp3",
+      "source_page": "https://mixkit.co/free-stock-music/",
+      "license": "Mixkit Stock Music Free License",
+      "license_url": "https://mixkit.co/license/#musicFree",
+      "attribution_required": false,
+      "retrieved_at": "2026-10-30T08:30:30.320217+00:00",
+      "sha256": "46330d05ad0c21d78c5767957fdd8212cee52ec549c3285a370de99311f8b4c6",
+      "duration": 117.73385,
+      "size": 4709354
+    },
+    {
+      "id": "relaxation-07",
+      "title": "Relaxation 07",
+      "artist": "Lily J",
+      "filename": "relaxation-07.mp3",
+      "source_url": "https://assets.mixkit.co/music/760/760.mp3",
+      "source_page": "https://mixkit.co/free-stock-music/",
+      "license": "Mixkit Stock Music Free License",
+      "license_url": "https://mixkit.co/license/#musicFree",
+      "attribution_required": false,
+      "retrieved_at": "2026-10-30T08:30:37.183399+00:00",
+      "sha256": "30d63886409615893b8e942dc4120133bc998a7014e5c0cf685007f6aa7bd34a",
+      "duration": 144.117525,
+      "size": 5764701
+    },
+    {
+      "id": "meditation",
+      "title": "Meditation",
+      "artist": "Arulo",
+      "filename": "meditation.mp3",
+      "source_url": "https://assets.mixkit.co/music/441/441.mp3",
+      "source_page": "https://mixkit.co/free-stock-music/",
+      "license": "Mixkit Stock Music Free License",
+      "license_url": "https://mixkit.co/license/#musicFree",
+      "attribution_required": false,
+      "retrieved_at": "2026-10-30T08:30:43.317038+00:00",
+      "sha256": "6ffb81be8ab2447eb7b9357d6ae3d1b58eb8bc85376a724fafa5fe4d1acf562a",
+      "duration": 118.125714,
+      "size": 3780902
+    },
+    {
+      "id": "smooth-meditation",
+      "title": "Smooth Meditation",
+      "artist": "Arulo",
+      "filename": "smooth-meditation.mp3",
+      "source_url": "https://assets.mixkit.co/music/324/324.mp3",
+      "source_page": "https://mixkit.co/free-stock-music/",
+      "license": "Mixkit Stock Music Free License",
+      "license_url": "https://mixkit.co/license/#musicFree",
+      "attribution_required": false,
+      "retrieved_at": "2026-10-30T08:30:49.084194+00:00",
+      "sha256": "db8d8f0f00e7d4acacf0382beff34eb3559aaf38668909932abcf91cd4751095",
+      "duration": 153.730612,
+      "size": 4920259
+    },
+    {
+      "id": "serene-view",
+      "title": "Serene View",
+      "artist": "Arulo",
+      "filename": "serene-view.mp3",
+      "source_url": "https://assets.mixkit.co/music/443/443.mp3",
+      "source_page": "https://mixkit.co/free-stock-music/",
+      "license": "Mixkit Stock Music Free License",
+      "license_url": "https://mixkit.co/license/#musicFree",
+      "attribution_required": false,
+      "retrieved_at": "2026-10-30T08:30:52.822859+00:00",
+      "sha256": "556ae7a19c783bd666593e60fbba776bac7f9ff6c2173bebded0bc200cc82ec3",
+      "duration": 113.972245,
+      "size": 3647991
+    }
+  ]
+}

@@ -57,14 +57,19 @@ def main(argv=None):
         command.add_argument("--version", required=True)
         command.add_argument("--scene-id")
     for command in commands.choices.values():
-        command.add_argument("--project-dir", required=True)
+        command.add_argument("--project-dir", required=command is not serve,
+                             help="Project directory; omit for serve-review to open the project picker")
         command.add_argument("--summary", action="store_true", help="Print a compact status instead of full JSON")
     try:
         args = parser.parse_args(argv)
         load_local_env()
         if args.command == "serve-review":
             from src.shared.review_server import serve_review
-            serve_review(args.project_dir, args.port)
+            if args.project_dir:
+                serve_review(args.project_dir, args.port)
+            else:
+                from src.shared.project_launcher import serve_projects
+                serve_projects(args.port)
             return 0
         if args.command == "av":
             from src.preview.av_workflow import generate

@@ -59,10 +59,15 @@ cầu tiếp tục. Việc sửa mã clip theo góp ý vẫn có luồng agent r
 
 ```bash
 conda activate video
-python main.py serve-review --project-dir data/projects/video_moi --port 8765
+python main.py serve-review --port 8765
 ```
 
-Thư mục mới được khởi tạo khi mở máy chủ; bạn không cần tạo dự án bằng CLI trước.
+Mở `http://127.0.0.1:8765` để tạo project mới hoặc chọn project đã lưu.
+Mỗi project có thư mục riêng trong `data/projects` của repo; có thể mở nhiều project cùng lúc.
+Khi chọn project, trình duyệt chuyển sang trang duyệt của project trên một cổng cục bộ riêng.
+Dùng nút quay lại của trình duyệt để trở về danh sách. Chạy lại lệnh trên sau khi khởi động lại
+để mở các project đã lưu. Vẫn có thể dùng `--project-dir DUONG_DAN` để mở trực tiếp một project.
+
 Nhập chủ đề, mục tiêu, người xem, khoảng thời lượng trong 30–60 giây, phong cách
 và định dạng video tại `http://127.0.0.1:8765/#idea`. **Lưu bản nháp** lưu vào
 dự án. **Tạo kịch bản từ ý tưởng** gửi các trường này làm đầu vào tạo nội dung
