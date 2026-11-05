@@ -37,8 +37,10 @@ try:
         page.get_by_label('Cách hiện bằng Manim').fill('Nền sáng, quả địa cầu đơn giản')
         page.get_by_label('Độ dài dự kiến').fill('30–45 giây')
         page.get_by_label('Facebook · video dọc').check()
-        page.get_by_role('button',name='Lưu bản nháp',exact=True).click()
-        page.wait_for_function("() => document.querySelector('#notice').textContent.startsWith('Đã lưu yêu cầu')")
+        page.get_by_role('button',name='Ý tưởng mới',exact=True).click()
+        page.get_by_role('heading',name='Project của bạn',exact=True).wait_for()
+        page.goto(url)
+        page.get_by_label('Chủ đề / câu hỏi mở đầu').wait_for()
         # Server draft survives a browser context without localStorage.
         other=browser.new_page()
         other.goto(url)

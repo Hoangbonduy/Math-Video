@@ -72,6 +72,35 @@ class ReviewTests(WorkflowCase):
         approved = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_02")
         self.assertEqual(approved["stage"], "scene_clip")
 
+    def test_warned_paused_design_can_be_approved_then_receive_feedback(self):
+        from src.shared import workflow as wf
+        from src.shared import _workflow_store as store
+        self.reach("scene_design")
+        with store.locked_project(self.project) as root:
+            project, reviews = wf._load(root)
+            artifact = wf._latest(project, "scene_design", "scene_01")
+            artifact.update(design_pipeline=2, quality_passed=False,
+                            quality_path="quality_warning.json", manim_render={"sha256":"video-sha"})
+            store.atomic_write(root / "quality_warning.json", dict(
+                passed=False, design_sha256=artifact["sha256"], video_sha256="video-sha", evidence_files=[]))
+            project["scene_pauses"] = {"scene_01": {"script_sha256": "paused-script"}}
+            wf._save(root, project, reviews)
+        approved = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_01")
+        self.assertEqual(approved["stage"], "scene_design")
+        item = next(r for r in approved["review_history"] if r["scene_id"] == "scene_01")
+        self.assertEqual(item["status"], "approved")
+        project = store.read_json(self.project / "project.json")
+        self.assertNotIn("scene_01", project["scene_pauses"])
+        artifact = wf._latest(project, "scene_design", "scene_01")
+        self.assertFalse(artifact["quality_passed"], "Human approval must preserve the quality warning")
+        changed = record_review(self.project, "scene_design", "v001", "request_changes",
+                                scene_id="scene_01", feedback="Giữ cảnh báo và sửa bố cục")
+        item = next(r for r in changed["review_history"] if r["scene_id"] == "scene_01")
+        self.assertEqual(item["status"], "changes_requested")
+        self.assertEqual(item["feedback"], "Giữ cảnh báo và sửa bố cục")
+        approved = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_01")
+        self.assertEqual(next(r for r in approved["review_history"] if r["scene_id"] == "scene_01")["status"], "approved")
+
     def test_design_reviews_are_independent_and_gate_all_scenes(self):
         self.reach("scene_design")
         first = record_review(self.project, "scene_design", "v001", "approve", scene_id="scene_01")

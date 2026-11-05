@@ -6,14 +6,14 @@ let ideaDraft, ideaBusy = false, workflowBusy = false, apiCompatible = false;
 let manimRuntime, workflowTasks = {};
 let aiProvider = null, providerPending = false;
 let codexAuth = null, codexAuthPending = false, codexLoginMethod = 'device', codexAuthSignature = '';
-let previewMode = null, previewPlayback = null, subtitlesVisible = true, sceneReviewOpen = false, voiceDraft = null, voiceSettingsOpen = false;
+let previewMode = null, previewPlayback = null, subtitlesVisible = true, sceneReviewOpen = false;
 const previewAttempts = new Set();
 let scriptExpanded = false, scriptHistory = {items:[]}, selectedScriptVersion = null, historyQuery = '';
 const scriptDetails = new Map(), loadingScripts = new Set();
 let deletingScript = null;
 const SERVER_UPDATE_MESSAGE = 'Ứng dụng vừa được cập nhật. Hãy khởi động lại máy chủ và tải lại trang để dùng chức năng tạo kịch bản.';
 const feedbackDrafts = new Map();
-const labels = {draft_ready:'Bản nháp sẵn sàng',pending:'Chờ duyệt', approved:'Đã duyệt', changes_requested:'Cần chỉnh sửa', superseded:'Bản cũ', ready:'Sẵn sàng', needs_revision:'Cần chỉnh sửa', awaiting_review:'Chờ duyệt', scene_design:'Thiết kế', scene_av:'Cảnh có tiếng', scene_clip:'Bản dựng không tiếng', script:'Kịch bản', final_video:'Chờ ghép video', analyzing:'Đang phân tích', planned:'Chuẩn bị sửa', awaiting_scope:'Chờ duyệt phạm vi', awaiting_design:'Chờ duyệt thiết kế mới', rendering:'Đang dựng', awaiting_clip:'Chờ duyệt clip mới', completed:'Hoàn tất', failed:'Đã dừng do lỗi', stale:'Đầu vào đã thay đổi', out_of_scope:'Ngoài phạm vi', cancelled:'Đã hủy'};
+const labels = {paused:'Đã tạm dừng',pausing:'Đang tạm dừng',draft_ready:'Bản nháp sẵn sàng',pending:'Chờ duyệt', approved:'Đã duyệt', changes_requested:'Cần chỉnh sửa', superseded:'Bản cũ', ready:'Sẵn sàng', needs_revision:'Cần chỉnh sửa', awaiting_review:'Chờ duyệt', scene_design:'Thiết kế', scene_av:'Cảnh có tiếng', scene_clip:'Bản dựng không tiếng', script:'Kịch bản', final_video:'Chờ ghép video', analyzing:'Đang phân tích', planned:'Chuẩn bị sửa', awaiting_scope:'Chờ duyệt phạm vi', awaiting_design:'Chờ duyệt thiết kế mới', rendering:'Đang dựng', awaiting_clip:'Chờ duyệt clip mới', completed:'Hoàn tất', failed:'Đã dừng do lỗi', stale:'Đầu vào đã thay đổi', out_of_scope:'Ngoài phạm vi', cancelled:'Đã hủy'};
 const label = value => labels[value] || value;
 const $ = id => document.getElementById(id);
 function el(tag, text, parent, className) {
@@ -95,7 +95,7 @@ function renderShell() {
   if (codex) {
     const calls = budget?.billing_source === state.ai_backend + '_subscription' ? budget.request_count : 0;
     $('budget').textContent = `${providerName} · ${calls || 0} lượt`;
-    $('budget').title = 'Dùng hạn mức tài khoản đã đăng nhập trong ' + providerName + '. Giọng đọc dùng nguồn đã chọn trong Cấu hình giọng đọc.';
+    $('budget').title = 'Dùng hạn mức tài khoản đã đăng nhập trong ' + providerName + '.';
   } else {
     $('budget').textContent = budget ? `${budget.budget_used_usd.toFixed(4)} / ${budget.budget_usd.toFixed(2)} USD` : 'Chưa sử dụng';
     $('budget-progress').value = budget ? budget.budget_used_usd / budget.budget_usd : 0;
@@ -117,11 +117,9 @@ function renderShell() {
   } else if (currentPage === 'design') {
     button($('page-actions'), 'Ghi chú duyệt', () => { $('feedback').scrollIntoView({behavior:'smooth', block:'center'}); $('feedback-text')?.focus(); });
     button($('page-actions'), 'Xem bản dựng →', () => { userHistory = false; selection = null; navigate('preview'); }, 'primary');
-  } else if (currentPage === 'preview') {
-    button($('page-actions'), '← Chỉnh sửa cảnh', () => { userHistory = false; selection = null; navigate('design'); });
-  } else {
+  } else if (currentPage === 'idea') {
     button($('page-actions'), 'Ý tưởng mới', newIdea);
-    button($('page-actions'), 'Lưu bản nháp', saveIdea);
+
   }
   $('idea-page').hidden = currentPage !== 'idea';
   $('scene-page').hidden = ['idea','history'].includes(currentPage);
@@ -233,13 +231,13 @@ function render() {
   if (currentPage === 'idea') { renderIdea(); return; }
   if (currentPage === 'history') { renderScriptHistory(); return; }
   if (state.stage === 'script') {
-    if (currentPage === 'preview') { renderVoice(); renderContinuousPreview(); return; }
+    if (currentPage === 'preview') { renderMusic(); renderContinuousPreview(); return; }
     $('scenes').replaceChildren(); $('scene-strip').replaceChildren(); $('scene-count').textContent = '0';
     emptyViewer($('viewer'), 'Cần tạo và duyệt kịch bản', 'Trở về bước Ý tưởng để tạo kịch bản từ nội dung bạn nhập, sau đó duyệt trước khi thiết kế cảnh.');
     button($('viewer'), '← Về ý tưởng và kịch bản', () => navigate('idea'), 'primary');
     $('editor').hidden = true; $('feedback').hidden = true; return;
   }
-  renderVoice(); renderFinal(); renderContinuousPreview();
+  renderMusic(); renderFinal(); renderContinuousPreview();
   renderScenes();
   if (!sid) { emptyViewer($('viewer'), 'Chưa có cảnh', 'Duyệt kịch bản trước khi tạo thiết kế cảnh.'); $('editor').hidden = true; $('feedback').hidden = true; return; }
   $('feedback').hidden = false;
@@ -257,12 +255,9 @@ function render() {
     chooser.value = selection || ''; chooser.onchange = () => { selection = chooser.value; userHistory = true; render(); };
   }
   if (['scene_design','scene_clip'].includes(state.stage)) {
-    const retry=sceneJob(sid)?.status==='failed' || Boolean(state.scene_drafts?.[sid]);
-    const text=retry?'Chạy lại cảnh này':'Tạo cảnh này';
-    button($('controls'),text,()=>action('continue',{scene_id:sid,new_attempt:retry}),'text-button').disabled=workflowBusy || manimRuntime?.available===false;
+    button($('controls'),'Tạo cảnh này',()=>action('continue',{scene_id:sid,new_attempt:true}),'text-button').disabled=workflowBusy || manimRuntime?.available===false;
   }
-  if(state.scene_generation?.codex_usage_limited){el('p','Lượt Codex mới nhất báo hết hạn mức. Đổi tài khoản Codex hoặc dựng lại thiết kế đã lưu.',$('controls'),'feedback-help');button($('controls'),'Đổi tài khoản Codex',openCodexAccount);}
-  if((state.saved_design_scenes || []).includes(sid))button($('controls'),'Dựng lại thiết kế đã lưu',()=>action('render-saved',{scene_id:sid}),'text-button').disabled=workflowBusy || manimRuntime?.available===false;
+  if(state.scene_generation?.codex_usage_limited){el('p','Lượt Codex mới nhất báo hết hạn mức. Đổi tài khoản Codex để tạo cảnh mới.',$('controls'),'feedback-help');button($('controls'),'Đổi tài khoản Codex',openCodexAccount);}
   const draft=state.scene_drafts?.[sid];
   if(!artifact && draft){
     downloadLink($('controls'),'Tải video nháp',draft.reference.path);
@@ -300,7 +295,7 @@ async function refresh() {
     const compatibilityChanged = apiCompatible !== ((data.api_version === 1 && data.capabilities?.includes('script_history') && data.capabilities?.includes('new_generation') && data.capabilities?.includes('manim_design')));
     apiCompatible = (data.api_version === 1 && data.capabilities?.includes('script_history') && data.capabilities?.includes('new_generation') && data.capabilities?.includes('manim_design'));
     if (state && state.project_id !== data.project.project_id) {
-      previewMode = null; previewPlayback = null; voiceDraft = null; musicDraft = null; sceneReviewOpen = false; previewAttempts.clear();
+      previewMode = null; previewPlayback = null; musicDraft = null; sceneReviewOpen = false; previewAttempts.clear();
       ideaDraft = undefined; scriptExpanded = false; scriptHistory = {items:[]}; selectedScriptVersion = null; scriptDetails.clear(); feedbackDrafts.clear(); selection = null; userHistory = false; sid = undefined;
       $('idea-form')?.remove(); revisionSeen = -1;
     }
@@ -314,7 +309,7 @@ async function refresh() {
     aiProvider = data.ai_provider || null;
     const authSignature = JSON.stringify([codexAuth,aiProvider]);
     const authChanged = authSignature !== codexAuthSignature; codexAuthSignature = authSignature;
-    workflowBusy = tasks.some(t => ['working','queued'].includes(t.state)) || Boolean(codexAuth?.busy);
+    workflowBusy = tasks.some(t => ['working','queued','pausing'].includes(t.state)) || Boolean(codexAuth?.busy);
     if (authChanged) renderCodexAccount();
     if (!apiCompatible) notice(SERVER_UPDATE_MESSAGE, true);
     else if (codexAuth?.busy) notice(codexAuth.message);

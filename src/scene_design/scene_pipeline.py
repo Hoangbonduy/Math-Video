@@ -33,6 +33,8 @@ def _messages(instruction,context):
 
 
 def _progress(session,phase,round_index):
+    from src.shared.task_control import checkpoint
+    checkpoint()
     session.job.update(progress=phase,design_pipeline=VERSION,repair_round=round_index,max_repairs=session.job.get("input",{}).get("max_repairs",MAX_REPAIRS))
     session.save()
 

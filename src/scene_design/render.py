@@ -138,8 +138,11 @@ def _run_worker(request_path, project, log, timeout):
         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
         start_new_session=(os.name == "posix"),
     )
+    from src.shared.task_control import watch_process
     try:
-        return process.wait(timeout=timeout)
+        with watch_process(process):
+            result=process.wait(timeout=timeout)
+        return result
     except subprocess.TimeoutExpired as exc:
         raise RenderFailure("TIMEOUT", f"Render exceeded {timeout:g} seconds; worker and child processes stopped") from exc
     finally:
@@ -285,6 +288,8 @@ def render_scene(project_dir, scene_id, version, scene_file, scene_name, render_
                     failed_log.write(f"\nFAILED: {result['error']}\n")
             except OSError:
                 pass
+    from src.shared.task_control import checkpoint
+    checkpoint()
     return result
 
 

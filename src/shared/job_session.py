@@ -68,6 +68,8 @@ class Session:
         return response
 
     def call(self, phase, messages, *, schema=None, search=False, client=None, pricing=None):
+        from src.shared.task_control import checkpoint
+        checkpoint()
         call_client = client or self.client
         call_pricing = pricing or self.job.get("pricing")
         subscription = getattr(call_client,"billing_source",None) in SUBSCRIPTION_SOURCES
@@ -133,6 +135,10 @@ class Session:
                 time.sleep(exc.retry_after)
                 continue
             except Exception as exc:
+                if isinstance(exc,WorkflowError) and exc.code=='TASK_PAUSED':
+                    entry.update(status='interrupted',error_code=exc.code,error=exc.message,finished_at=_now())
+                    self.save()
+                    raise
                 if isinstance(exc, WorkflowError) and exc.code in ('API_KEY_MISSING','CODEX_LOGIN_REQUIRED','CODEX_NOT_FOUND','CODEX_CONFIG','CODEX_USAGE_LIMIT'):
                     entry.update(status="rejected", error_code=exc.code, error=exc.message)
                     self.save()

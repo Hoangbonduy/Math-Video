@@ -284,7 +284,7 @@ def resume_input(jobs, fingerprint, attempt_id):
     """Resume the saved policy; explicit new attempts use the new prompt profile."""
     if attempt_id:
         return fingerprint
-    ignored={'design_prompt_version','max_repairs'}
+    ignored={'design_prompt_version','max_repairs','attempt_id'}
     comparable=lambda value:{k:v for k,v in value.items() if k not in ignored}
     for existing in reversed(jobs):
         if existing['status'] in ('planned','working','failed') and comparable(existing['input'])==comparable(fingerprint):
@@ -300,6 +300,30 @@ def fresh_after_cancelled(jobs, fingerprint):
         if prior:
             return dict(fingerprint,attempt_id='reset-'+prior['job_id'])
     return fingerprint
+
+
+def request_failed_feedback(project_dir, scene_id, job_id, feedback):
+    """Save feedback against a failed unpublished design, keeping its ledger intact."""
+    if not isinstance(feedback,str) or not feedback.strip() or len(feedback)>10000:
+        raise WorkflowError('INVALID_INPUT','Nhập góp ý, tối đa 10000 ký tự.')
+    from src.shared import workflow as wf
+    with store.locked_project(project_dir) as root:
+        project,reviews=wf._load(root)
+        if project['stage']!='scene_design' or scene_id not in project['scene_ids'] or wf._latest(project,'scene_design',scene_id):
+            raise WorkflowError('STALE_REVIEW','Tải lại phiên bản cảnh hiện tại để góp ý.')
+        script=wf._latest(project,'script',None)
+        jobs=[j for j in (_jobs(root) if (root/BASE/'ledger.json').exists() else []) if j['input'].get('scene_id')==scene_id
+              and j['input'].get('stage')=='scene_design' and j.get('status')!='cancelled'
+              and j['input'].get('script_sha256')==script['sha256']
+              and j['input'].get('model')==get_model()
+              and j['input'].get('ai_backend','openrouter')==get_backend()]
+        job=jobs[-1] if jobs else None
+        queued_pause=not job and job_id is None and project.get('scene_pauses',{}).get(scene_id,{}).get('script_sha256')==script['sha256']
+        if not queued_pause and (not job or job['job_id']!=job_id or job['status'] not in ('failed','paused')):
+            raise WorkflowError('STALE_REVIEW','Cảnh đã đổi hoặc đang tạo. Tải lại trước khi góp ý.')
+        project.setdefault('failed_scene_feedback',{})[scene_id]=dict(
+            job_id=job_id,script_sha256=script['sha256'],feedback=feedback.strip())
+        wf._save(root,project,reviews)
 
 
 def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=False, attempt_id=None, auto_continue=False):
@@ -322,7 +346,7 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
             from src.scene_design.scene_revision import active
             busy={sid for rev in active(reviews) for sid in rev['affected']}
             targets=[sid for sid in targets if sid not in busy]
-            eligible=[s for s in targets if not (a:=wf._latest(project,stage,s)) or wf._request(reviews,a)['status']=='changes_requested']
+            eligible=[s for s in targets if not (a:=wf._latest(project,stage,s)) or wf._request(reviews,a)['status']=='changes_requested' or (attempt_id and stage=='scene_design' and wf._request(reviews,a)['status']=='pending')]
             if not eligible: return wf._view(root,project,reviews)
             script,payload,durations=_context(root,project,reviews)
             config=_config(root)
@@ -351,10 +375,13 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
             with store.locked_project(root):
                 project,reviews=wf._load(root); _context(root,project,reviews)
                 base=wf._latest(project,stage,target)
-                if project['stage']!=stage or (base and wf._request(reviews,base)['status']!='changes_requested'): continue
+                if project['stage']!=stage or (base and wf._request(reviews,base)['status']!='changes_requested' and not (attempt_id and stage=='scene_design' and wf._request(reviews,base)['status']=='pending')): continue
                 if base: wf._verify(root,base)
                 scene=next(s for s in payload['script']['scenes'] if s['scene_id']==target)
                 feedback=wf._request(reviews,base)['feedback'] if base else None
+                failed_feedback=project.get('failed_scene_feedback',{}).get(target,{})
+                if not base and stage=='scene_design' and failed_feedback.get('script_sha256')==script['sha256']:
+                    feedback=failed_feedback['feedback']
                 version=wf._next_version(project,stage,target)
                 design=wf._latest(project,'scene_design',target) if stage=='scene_clip' else None
                 if stage=='scene_clip' and (not design or design.get('origin')!='ai_scene' or not design.get('review_path')):
@@ -407,7 +434,7 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     drafts=current_drafts(root)
                     latest_design=None
                     latest_storyboard=None
-                    if target in drafts:
+                    if not attempt_id and target in drafts:
                         d=drafts[target]
                         dp=store.project_path(root,d['design_path']) if d.get('design_path') else None
                         sp=store.project_path(root,d['storyboard_path']) if d.get('storyboard_path') else None
@@ -417,10 +444,10 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                         if sp and sp.exists():
                             try: latest_storyboard=store.read_json(sp)
                             except Exception: pass
-                    if latest_design is None and base:
+                    if not attempt_id and latest_design is None and base:
                         try: latest_design=store.read_json(root/base['path'])
                         except Exception: pass
-                    if latest_storyboard is None and base:
+                    if not attempt_id and latest_storyboard is None and base:
                         sb_path=base.get('storyboard_path')
                         if sb_path and store.project_path(root,sb_path).exists():
                             try: latest_storyboard=store.read_json(store.project_path(root,sb_path))
@@ -430,6 +457,16 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                             if sb_path.exists():
                                 try: latest_storyboard=store.read_json(sb_path)
                                 except Exception: pass
+                    if feedback and not base and failed_feedback.get('job_id'):
+                        prior=next((j for j in _jobs(root) if j['job_id']==failed_feedback['job_id']),None)
+                        if prior:
+                            context['previous_error']=prior.get('last_error')
+                            context['previous_issues']=prior.get('quality_issues',[])
+                            previous=root/BASE/prior['job_id']
+                            for saved in ([] if attempt_id else sorted(previous.glob('round_*/design.json'),reverse=True)):
+                                latest_design=store.read_json(saved)
+                                if saved.with_name('storyboard.json').exists():latest_storyboard=store.read_json(saved.with_name('storyboard.json'))
+                                break
                     if latest_design: context['previous_design']=latest_design
                     if latest_storyboard: context['previous_storyboard']=latest_storyboard
                 if design:
@@ -457,7 +494,10 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     if job.get('pricing') and job['pricing']!=pricing:
                         job.setdefault('pricing_history',[]).append(job['pricing'])
                     job['pricing']=pricing; session.save()
+                from src.shared.task_control import checkpoint
+                checkpoint()
                 source,extra=(_design if stage=='scene_design' else _clip)(root,directory,session,context)
+                checkpoint()
                 _write(directory,'generation.json',dict(input=fingerprint,calls=job['calls']))
                 paths=[root/'scene_config.json']+[p for p in directory.rglob('*') if p.is_file() and p.name!='job.json' and not p.name.startswith('code_error')]
                 assets=store.read_json(Path(source).parent/'assets.json') if stage=='scene_design' else context['assets']
@@ -482,12 +522,15 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     job.update(status='awaiting_review',last_error=None); session.save()
                     wf._save(root,project,reviews)
             except Exception as exc:
-                job.update(status='failed',last_error=redact(str(exc))); store.atomic_write(directory/'job.json',redact(job))
+                from src.shared.task_control import checkpoint
+                try:checkpoint()
+                except WorkflowError as paused:exc=paused
+                job.update(status='paused' if isinstance(exc,WorkflowError) and exc.code=='TASK_PAUSED' else 'failed',last_error=None if isinstance(exc,WorkflowError) and exc.code=='TASK_PAUSED' else redact(str(exc))); store.atomic_write(directory/'job.json',redact(job))
                 if isinstance(exc,WorkflowError):
                     if (scene_id is None or auto_continue) and exc.code in ('INVALID_SCENE_DESIGN','INVALID_SCENE_CODE','RENDER_FAILED','SCENE_DURATION_MISMATCH','DESIGN_CHANGE_REQUIRED','SCENE_QUALITY_FAILED','SCENE_CAPABILITY_MISSING'):
                         failures.append(target+': '+redact(str(exc)))
                         continue
-                    raise
+                    raise exc
                 raise WorkflowError('SCENE_GENERATION_FAILED',redact(str(exc))) from None
         if failures:
             raise WorkflowError('SCENE_GENERATION_FAILED','Các cảnh còn lại đã được xử lý. Lỗi theo cảnh: '+'; '.join(failures))

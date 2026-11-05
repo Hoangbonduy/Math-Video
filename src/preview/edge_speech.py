@@ -1,6 +1,6 @@
 """Microsoft Edge online Vietnamese speech, no user API key or FPT fallback."""
 import asyncio,hashlib,math,time,uuid
-import array,json,re,sys,wave
+import array,json,re,sys,wave,unicodedata
 from pathlib import Path
 from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
@@ -8,10 +8,16 @@ from src.shared.job_session import _json_bytes
 from src.shared.media_tools import binary,run,duration
 
 
-TRIM_VERSION = 1
+# Retire previews made with decomposed Vietnamese text (which can be spelled out).
+TRIM_VERSION = 2
 MAX_TRIM_SECONDS = .35
 KEEP_LEAD_SECONDS = .04
 KEEP_TAIL_SECONDS = .08
+# Empty responses can persist beyond the old 2/5-second retry window.
+RETRY_DELAYS = (5, 15, 30, 60)
+ATTEMPT_TIMEOUT = 60
+SYNTHESIS_TIMEOUT = ATTEMPT_TIMEOUT * (len(RETRY_DELAYS) + 1) + sum(RETRY_DELAYS) + 10
+REQUEST_GAP_SECONDS = 5.0
 
 
 
@@ -89,6 +95,7 @@ async def _download(text,voice,rate,path,boundary='WordBoundary'):
     except ImportError:raise WorkflowError('TTS_CONFIGURATION','Cài edge-tts trong môi trường Python chạy app.') from None
     # One synthesis attempt only. _with_retries owns backoff, metadata mode,
     # and attempt accounting so the ledger matches the Communicate calls.
+    text = unicodedata.normalize('NFC', text)
     started = time.monotonic()
     key = path.name.split('.')[0][:12]
     _voice_log('download_start', key=key, library_version=getattr(edge_tts, '__version__', 'unknown'),
@@ -120,32 +127,35 @@ def _failure(exc):
 
 async def _with_retries(text,voice,rate,path,call):
     boundary='WordBoundary'
-    for attempt in range(3):
+    # Vietnamese combining marks must never be sent separately to the voice.
+    text = unicodedata.normalize('NFC', text)
+    for attempt in range(len(RETRY_DELAYS)+1):
         path.unlink(missing_ok=True)
-        call.update(attempts=attempt+1,boundary=boundary)
-        _voice_log('attempt_start', call_id=call['id'], key=call['key'][:12], attempt=attempt+1, maximum_attempts=3, boundary=boundary)
+        text_form = 'NFC'
+        call.update(attempts=attempt+1,boundary=boundary,request_text_form=text_form)
+        _voice_log('attempt_start', call_id=call['id'], key=call['key'][:12], attempt=attempt+1, maximum_attempts=len(RETRY_DELAYS)+1, boundary=boundary, text_form=text_form)
         try:
-            await _download(text,voice,rate,path,boundary=boundary)
+            await asyncio.wait_for(_download(text,voice,rate,path,boundary=boundary), timeout=ATTEMPT_TIMEOUT)
             _voice_log('attempt_complete', call_id=call['id'], attempt=attempt+1, boundary=boundary)
             return
         except Exception as exc:
             if isinstance(exc,WorkflowError):raise
             code,message,retry=_failure(exc)
             call.update(error=type(exc).__name__,error_code=code)
-            diag=dict(attempt=attempt+1,boundary=boundary,error=type(exc).__name__,code=code)
+            diag=dict(attempt=attempt+1,boundary=boundary,text_form=text_form,error=type(exc).__name__,code=code)
             if hasattr(exc,'status'):diag['status']=exc.status
             call.setdefault('attempt_diagnostics',[]).append(diag)
             _voice_log('attempt_error', call_id=call['id'], attempt=attempt+1, boundary=boundary, code=code, retryable=retry, **_error_details(exc))
-            if not retry or attempt==2:raise WorkflowError(code,message) from None
+            if not retry or attempt==len(RETRY_DELAYS):raise WorkflowError(code,message) from None
             # Nam Minh can return no audio for one metadata mode but work in
             # the other with the same text/voice. Never change the user's voice.
             if type(exc).__name__=='NoAudioReceived':
                 boundary='SentenceBoundary' if boundary=='WordBoundary' else 'WordBoundary'
-            delay=(2,5)[attempt]
+            delay=RETRY_DELAYS[attempt]
             if getattr(exc,'status',None)==429:
                 try:delay=max(delay,float((getattr(exc,'headers',None) or {}).get('Retry-After',delay)))
                 except (ValueError,TypeError):pass
-                if delay>10:raise WorkflowError(code,message) from None
+                if delay>RETRY_DELAYS[-1]:raise WorkflowError(code,message) from None
             _voice_log('retry_wait', call_id=call['id'], next_attempt=attempt+2, next_boundary=boundary, delay_seconds=delay)
             await asyncio.sleep(delay)
 
@@ -154,11 +164,18 @@ def synthesize(root,text,config,retry_uncertain=None):
     from src.preview.audio import init_ledger
     root=Path(root)
     if not isinstance(text,str):raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
-    text=' '.join(text.split())
+    text=unicodedata.normalize('NFC', ' '.join(text.split()))
     if not 3<=len(text)<=5000:raise WorkflowError('INVALID_INPUT','Lời đọc cần 3–5000 ký tự.')
-    key=hashlib.sha256(_json_bytes(dict(provider='edge',voice=config['voice'],speed=config['speed'],text=text,format='wav'))).hexdigest()
+    identity=dict(provider='edge',voice=config['voice'],speed=config['speed'],text=text,format='wav')
+    key=hashlib.sha256(_json_bytes(identity)).hexdigest()
+    ledger=init_ledger(root)
+    completed=next((c for c in reversed(ledger['calls']) if c['key']==key and c['status']=='complete'),None)
+    if completed and completed.get('request_text_form')=='NFD':
+        # Keep the old bytes immutable; never reuse decomposed-text speech.
+        identity['text_normalization']='NFC'
+        key=hashlib.sha256(_json_bytes(identity)).hexdigest()
     _voice_log('synthesize_start', key=key[:12], project=str(root), voice=config['voice'], speed=config['speed'], characters=len(text), text=text[:200])
-    ledger=init_ledger(root);directory=root/'generation/checkpoint_7';path=directory/(key+'.wav');meta=directory/(key+'.json');ledger_path=directory/'ledger.json'
+    directory=root/'generation/checkpoint_7';path=directory/(key+'.wav');meta=directory/(key+'.json');ledger_path=directory/'ledger.json'
     if meta.exists():
         cached=store.read_json(meta)
         if cached.get('status')=='complete':
@@ -169,21 +186,21 @@ def synthesize(root,text,config,retry_uncertain=None):
     if previous and previous['status'] in ('in_flight','uncertain') and retry_uncertain!=previous['id']:
         raise WorkflowError('TTS_RESULT_UNKNOWN','Lượt giọng Microsoft chưa rõ kết quả. Chọn tiếp tục lượt đó trước khi gửi lại.')
     recent=max((c.get('completed_epoch') or c.get('started_epoch',0) for c in ledger.get('calls',[]) if c.get('provider')=='edge'),default=0)
-    wait=max(0.0,recent+1.5-time.time())
+    wait=max(0.0,recent+REQUEST_GAP_SECONDS-time.time())
     if wait>0:
-        _voice_log('throttle_wait', key=key[:12], delay_seconds=round(min(wait,3.0),3))
-        time.sleep(min(wait,3.0))
+        _voice_log('throttle_wait', key=key[:12], delay_seconds=round(min(wait,REQUEST_GAP_SECONDS),3))
+        time.sleep(min(wait,REQUEST_GAP_SECONDS))
     call=dict(id=uuid.uuid4().hex,key=key,provider='edge',status='in_flight',started_epoch=time.time(),characters=len(text),text=text,voice=config['voice'],speed=config['speed'],reserved_usd=None,cost_status='no_api_key',price=None,exchange_rate=None)
     ledger['calls'].append(call);store.atomic_write(ledger_path,ledger)
     mp3=directory/(key+'.download.mp3');temporary=directory/(key+'.partial.wav')
     try:
-        asyncio.run(asyncio.wait_for(_with_retries(text,config['voice'],f"{config['speed']*10:+d}%",mp3,call),timeout=75))
+        asyncio.run(asyncio.wait_for(_with_retries(text,config['voice'],f"{config['speed']*10:+d}%",mp3,call),timeout=SYNTHESIS_TIMEOUT))
         _voice_log('convert_start', call_id=call['id'], audio_bytes=mp3.stat().st_size)
         run([binary('ffmpeg'),'-y','-v','error','-i',str(mp3),'-ar','48000','-ac','1',str(temporary)])
         seconds=duration(temporary)
         if not math.isfinite(seconds) or seconds<=0:raise WorkflowError('TTS_AUDIO','Microsoft chưa trả âm thanh hợp lệ.')
         temporary.replace(path)
-        result=dict(status='complete',provider='edge',voice=config['voice'],boundary=call['boundary'],path=str(path.relative_to(root)),sha256=store.digest(path),duration=seconds,text=text,key=key)
+        result=dict(status='complete',provider='edge',voice=config['voice'],request_text_form='NFC',boundary=call['boundary'],path=str(path.relative_to(root)),sha256=store.digest(path),duration=seconds,text=text,key=key)
         store.atomic_write(meta,result);call['status']='complete';call['completed_epoch']=time.time();call.pop('error',None);call.pop('error_code',None);store.atomic_write(ledger_path,ledger)
         trimmed = _trim_cached(root,result)
         _voice_log('synthesize_complete', call_id=call['id'], key=key[:12], attempts=call['attempts'], boundary=call['boundary'], duration_seconds=round(trimmed['duration'],3))

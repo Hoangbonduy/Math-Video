@@ -242,4 +242,21 @@ class PreviewTests(unittest.TestCase):
             root=fixture(Path(directory),portrait=True);item=preview.generate(root)
             self.assertEqual(item['resolution'],[360,640])
 
+    def test_storyboard_accepts_native_then_preview_frame_rounding_only(self):
+        from src.preview import pacing
+        story = dict(beats=[dict(id='one',start=0,end=3,narration_excerpt='First.'),
+                            dict(id='two',start=3,end=6.512,narration_excerpt='Second.')])
+        source = dict(clip=dict(path='source.mp4'))
+        def segments():
+            return [dict(text=t,audio=dict(duration=.5)) for t in ['First.', 'Second.']]
+        with patch.object(pacing, '_story', return_value=story), patch.object(pacing, 'probe', return_value=dict(streams=[dict(codec_type='video',avg_frame_rate='12/1')])):
+            # Storyboard 6.512 -> native video 6.583333 -> preview 6.6 seconds.
+            beats = pacing.plan(self.root, source, ['First.', 'Second.'], segments(), 6.6, 30)
+            self.assertEqual(beats[-1]['source_end_frame'], 198)
+            self.assertEqual(beats[-1]['end_frame'], 198)
+            self.assertEqual(sum(b['hold_frames'] for b in beats), 0)
+            story['beats'][-1]['end'] = 6.4
+            with self.assertRaisesRegex(store.WorkflowError, 'PREVIEW_TIMING'):
+                pacing.plan(self.root, source, ['First.', 'Second.'], segments(), 6.6, 30)
+
 if __name__=='__main__': unittest.main()

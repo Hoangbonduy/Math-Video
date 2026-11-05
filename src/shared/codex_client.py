@@ -124,16 +124,20 @@ class CodexClient:
         store.atomic_write(directory/'execution.json',dict(command=command,billing_source=BILLING,auth_mode='chatgpt',image_count=len(images)))
         timeout=int(os.environ.get('CODEX_TIMEOUT_SECONDS') or codex_settings().get('timeout_seconds',600))
         if not 10<=timeout<=3600:raise WorkflowError('CODEX_CONFIG','CODEX_TIMEOUT_SECONDS phải từ 10 đến 3600.')
+        from src.shared.task_control import checkpoint
+        checkpoint()
         process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                                  text=True,encoding='utf-8',errors='replace',env=clean_environment(),start_new_session=True)
-        expired=False
-        try:stdout,stderr=process.communicate(text,timeout=timeout)
-        except subprocess.TimeoutExpired:
-            expired=True
-            os.killpg(process.pid,signal.SIGTERM)
-            try:stdout,stderr=process.communicate(timeout=5)
+        from src.shared.task_control import watch_process
+        with watch_process(process):
+            expired=False
+            try:stdout,stderr=process.communicate(text,timeout=timeout)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid,signal.SIGKILL);stdout,stderr=process.communicate()
+                expired=True
+                os.killpg(process.pid,signal.SIGTERM)
+                try:stdout,stderr=process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid,signal.SIGKILL);stdout,stderr=process.communicate()
         (directory/'events.jsonl').write_text(redact(stdout),encoding='utf-8')
         (directory/'stderr.log').write_text(redact(stderr),encoding='utf-8')
         if expired:raise WorkflowError('CODEX_TIMEOUT','Phiên Codex quá thời gian chờ; log đã lưu, không tự chạy lại.')
@@ -141,14 +145,18 @@ class CodexClient:
         for line in stdout.splitlines():
             try:events.append(json.loads(line))
             except ValueError:continue
+        completed=any(event.get('type')=='turn.completed' for event in events)
+        # JSONL error events also carry recoverable reconnect notices. Only a
+        # terminal failure (or missing completion) makes those notices fatal.
         errors=[event for event in events if event.get('type') in ('turn.failed','error')]
-        if process.returncode or errors:
+        failed=any(event.get('type')=='turn.failed' for event in events)
+        if process.returncode or failed or (errors and not completed):
             detail=json.dumps(errors,ensure_ascii=False) if errors else stderr[-1500:]
             if any(x.get('type')=='turn.failed' and 'hit your usage limit' in json.dumps(x).lower() for x in events) and not any(x.get('type')=='turn.completed' for x in events):
                 raise WorkflowError('CODEX_USAGE_LIMIT','Codex đã hết hạn mức sử dụng; chưa có kết quả mới. Có thể dựng lại thiết kế đã lưu trong app hoặc chạy lượt mới khi hạn mức được khôi phục.')
             raise WorkflowError('CODEX_FAILED','Codex không hoàn tất: '+redact(detail)[:2000])
         final=directory/'final.json'
-        if not final.is_file() or not any(x.get('type')=='turn.completed' for x in events):
+        if not final.is_file() or not completed:
             raise WorkflowError('CODEX_RESULT_INCOMPLETE','Codex chưa có kết quả hoàn tất; đã giữ log.')
         value=store.read_json(final)
         searches={x.get('item',{}).get('id') for x in events if x.get('type')=='item.completed' and x.get('item',{}).get('type')=='web_search' and x.get('item',{}).get('status') not in ('failed','denied')}

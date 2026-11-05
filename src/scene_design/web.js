@@ -6,12 +6,12 @@ function sceneTask(id) {
   const keys = sceneJob(id)?.kind === 'manim_design_preview' ? ['preview:'+id, 'generate:'+id] : ['generate:'+id, 'preview:'+id];
   const tasks = keys.map(key => workflowTasks[key]).filter(Boolean);
   const batch = workflowTasks.workflow;
-  if (batch && ['queued','working'].includes(batch.state)) {
+  if (batch && ['queued','working','pausing'].includes(batch.state)) {
     const active = state.scene_ids.filter(scene => ['planned','working'].includes(sceneJob(scene)?.status));
     const next = active.length ? active : [state.scene_ids.find(scene => !sceneJob(scene) && !latest(scene, state.stage))];
     if (next.includes(id)) tasks.push(batch);
   }
-  return tasks.find(t => ['queued','working'].includes(t.state)) || tasks[0];
+  return tasks.find(t => ['queued','working','pausing'].includes(t.state)) || tasks[0];
 }
 function stoppedScene() {
   if (workflowTasks.workflow?.state !== 'failed') return null;
@@ -33,20 +33,29 @@ function renderSceneProgress(artifact) {
   panel.hidden=!['design','preview'].includes(currentPage) || !sid || !['scene_design','scene_clip'].includes(state.stage);
   if(panel.hidden)return;
   const job=sceneJob(sid),task=sceneTask(sid);
-  const running=task && ['queued','working'].includes(task.state);
+  const running=task && ['queued','working','pausing'].includes(task.state);
   const batchFailure=!job && sceneBatchFailure();
-  const failed=!running && (task?.state==='failed' || job?.status==='failed' || artifact?.quality_passed===false || batchFailure);
+  const approved=reviewFor(artifact)?.status==='approved';
+  const paused=!approved && !running && (task?.state==='paused' || job?.status==='paused');
+  const failed=!running && (artifact?.quality_passed===false || job?.quality_issues?.length || (!paused && (task?.state==='failed' || job?.status==='failed' || batchFailure)));
   const draft=state.scene_drafts?.[sid];
   const rendered=artifact?.manim_render || state.design_previews?.[sid+':'+latest(sid,'scene_design')?.version] || draft?.reference;
-  const ready=!running && !failed && rendered?.renderer==='manim';
+  const ready=!paused && !running && !failed && rendered?.renderer==='manim';
   panel.className='scene-progress'+(failed?' error':'');
   panel.setAttribute('aria-busy',String(Boolean(running)));
   if(running){const spinner=el('span',undefined,panel,'spinner');spinner.setAttribute('aria-hidden','true');}
   const body=el('div',undefined,panel,'scene-progress-body');
-  el('strong',running ? task.state==='queued'?'Đang xếp hàng':scenePhase(job) : failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
+  el('strong',running ? task.state==='pausing'?'Đang tạm dừng…':task.state==='queued'?'Đang xếp hàng':scenePhase(job) : approved?'Đã duyệt':paused?'Đã tạm dừng · Chờ ghi chú duyệt':failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
   const engine = job?.kind==='saved_design_render' ? 'Thiết kế Codex đã lưu · Dựng tại máy' : (job?.kind === 'manim_design_preview' || job?.preview_engine === 'json') ? 'Preview từ thiết kế · Chạy tại máy' : 'AI: '+(job?.model || state.scene_generation?.model || 'Đang đọc cấu hình');
   el('p','Cảnh '+String(state.scene_ids.indexOf(sid)+1).padStart(2,'0')+' · '+engine+' · Render: Manim / Cairo',body);
   if(job?.design_pipeline===2)el('p','Storyboard → thiết kế → render → đánh giá hình · '+sceneRepairLabel(job),body);
+  if(running){
+    const actions=el('div',undefined,body,'actions');
+    button(actions,task.state==='pausing'?'Đang dừng…':'Dừng',async()=>{
+      if(await action('pause-scene',{scene_id:sid}))focusFeedback();
+    },'text-button').disabled=task.state==='pausing';
+  }
+  if(paused)button(el('div',undefined,body,'actions'),'Ghi chú duyệt',focusFeedback,'text-button');
   if(running)el('small',job?.updated_at?'Cập nhật tiến trình: '+new Date(job.updated_at).toLocaleTimeString('vi-VN')+' · Trang tự kiểm tra mỗi 2 giây.':'Yêu cầu đã được tiếp nhận. Trang tự kiểm tra mỗi 2 giây.',body);
   else if(failed){
     const error=job?.last_error || task?.error || batchFailure?.error || 'Không hoàn tất tạo cảnh.';
@@ -95,8 +104,8 @@ function renderScenes() {
     el('span', String(index + 1).padStart(2, '0'), node, 'scene-index');
     el('span', shortTitle(id), node, 'scene-name');
     const job = sceneJob(id), active = sceneTask(id);
-    const running = active && ['queued','working'].includes(active.state);
-    const status=running ? active.state === 'queued' ? 'Đang xếp hàng' : scenePhase(job) : job?.status === 'failed' && !artifact ? 'Đã dừng do lỗi' : !artifact && state.scene_drafts?.[id] ? 'Bản nháp · Chưa duyệt' : label(review?.status || 'Chưa tạo');
+    const running = active && ['queued','working','pausing'].includes(active.state);
+    const status=running ? active.state === 'queued' ? 'Đang xếp hàng' : scenePhase(job) : review?.status === 'approved' ? 'Đã duyệt' : job?.status === 'paused' || active?.state === 'paused' ? 'Đã tạm dừng' : job?.status === 'failed' && !artifact ? 'Đã dừng do lỗi' : !artifact && state.scene_drafts?.[id] ? 'Bản nháp · Chưa duyệt' : label(review?.status || 'Chưa tạo');
     node.setAttribute('aria-label', id + ' · ' + status);
     el('span', timing(id) + '\n' + status, node, 'scene-meta');
     if (running) { const spinner=el('span',undefined,node,'spinner scene-spinner'); spinner.setAttribute('aria-hidden','true'); }
@@ -128,13 +137,14 @@ function renderViewer(artifact) {
   const viewer = $('viewer');
   const heading = el('div', undefined, viewer, 'viewer-heading');
   el('span', 'Cảnh ' + String(state.scene_ids.indexOf(sid) + 1).padStart(2, '0') + ' · ' + shortTitle(sid), heading);
+  const approved = reviewFor(artifact)?.status === 'approved';
   const isFailedRun = sceneJob(sid)?.status === 'failed' || artifact?.quality_passed === false;
-  const draft = (!artifact || (isFailedRun && state.scene_drafts?.[sid])) ? state.scene_drafts?.[sid] : null;
+  const draft = (!artifact || (!approved && isFailedRun && state.scene_drafts?.[sid])) ? state.scene_drafts?.[sid] : null;
   const reference = draft?.reference || (artifact?.stage === 'scene_design' && (state.design_previews?.[sid + ':' + artifact.version] || artifact.manim_render));
   const motion = reference?.renderer === 'manim' ? reference : null;
   const isClip = ['scene_clip','scene_av'].includes(artifact?.stage) || Boolean(motion);
   const playPath = motion?.path || artifact?.path;
-  el('span', draft ? (isFailedRun ? 'Bản nháp · Cần chỉnh sửa' : 'Bản nháp · Chưa duyệt') : motion ? 'Video thiết kế · Manim Cairo' : isClip ? label(artifact.stage) + ' · ' + artifact.version : artifact ? 'Thiết kế cũ · Chưa render Manim' : 'Chưa có video Manim', heading, 'viewer-kind');
+  el('span', approved ? 'Đã duyệt' : draft ? (isFailedRun ? 'Bản nháp · Cần chỉnh sửa' : 'Bản nháp · Chưa duyệt') : motion ? 'Video thiết kế · Manim Cairo' : isClip ? label(artifact.stage) + ' · ' + artifact.version : artifact ? 'Thiết kế cũ · Chưa render Manim' : 'Chưa có video Manim', heading, 'viewer-kind');
   const canvas = el('div', undefined, viewer, 'scene-canvas');
   canvas.classList.toggle('portrait', state.idea?.format === 'portrait');
   let video;
@@ -144,7 +154,7 @@ function renderViewer(artifact) {
   } else if (artifact?.preview_path) {
     const image = el('img', undefined, canvas); image.src = media(artifact.preview_path); image.alt = 'Phác thảo bố cục ' + shortTitle(sid) + ' · ' + artifact.version;
     image.onerror = () => { image.remove(); emptyViewer(canvas, 'Không tải được ảnh phác', 'Kiểm tra lại tệp ảnh của phiên bản này.'); };
-  } else if (sceneTask(sid) && ['queued','working'].includes(sceneTask(sid).state)) {
+  } else if (sceneTask(sid) && ['queued','working','pausing'].includes(sceneTask(sid).state)) {
     emptyViewer(canvas, scenePhase(sceneJob(sid)), 'Video Manim sẽ xuất hiện tại đây sau khi render và kiểm tra thành công. Tiến trình đang được cập nhật mỗi 2 giây.');
     canvas.setAttribute('aria-busy','true');
   } else if (sceneJob(sid)?.status === 'failed' || sceneTask(sid)?.state === 'failed') {
@@ -212,14 +222,24 @@ function renderFeedback(artifact, artifacts) {
   const visual = el('div', undefined, parent, 'review-section'); el('h3', 'Hình minh họa ↔ đồ thị', visual); el('p', 'Kiểm tra bố cục, chuyển động và sự khớp nhau giữa hình ảnh với dữ liệu.', visual);
   button(visual, 'Mở thiết lập liên kết', () => { editorTab = 'math'; if (currentPage !== 'design') navigate('design'); else render(); $('editor').scrollIntoView({behavior:'smooth', block:'center'}); }, 'text-button');
   const math = el('div', undefined, parent, 'review-section'); el('h3', 'Nội dung toán', math); el('p', 'Kiểm tra giả định, đơn vị và ý nghĩa của từng bước minh họa.', math);
-  if (!artifact) {
+  if (!artifact && currentPage === 'design' && state.stage === 'scene_design' && (['failed','paused'].includes(sceneJob(sid)?.status) || ['paused','pausing'].includes(sceneTask(sid)?.state))) {
+    el('p', sceneJob(sid)?.status === 'paused' || ['paused','pausing'].includes(sceneTask(sid)?.state) ? 'Cảnh đã được yêu cầu tạm dừng. Nhập ghi chú duyệt để tạo bản mới theo góp ý.' : 'Cảnh chưa tạo xong. Nhập góp ý để tạo bản mới.', parent, 'feedback-help');
+    const key = 'failed-design:' + sid;
+    const wrapper = el('label', undefined, parent, 'field'); el('span', 'Điều cần chỉnh sửa', wrapper);
+    const text = el('textarea', undefined, wrapper); text.id = 'feedback-text'; text.maxLength = 10000; text.setAttribute('aria-label', 'Góp ý');
+    text.value = feedbackDrafts.get(key) || ''; text.oninput = () => feedbackDrafts.set(key, text.value);
+    button(el('div', undefined, parent, 'actions'), 'Gửi góp ý và tạo cảnh này', async () => {
+      if (!text.value.trim()) { notice('Hãy nhập điều cần chỉnh sửa.', true); text.focus(); return; }
+      if (await action('failed-scene-feedback', {scene_id:sid, job_id:sceneJob(sid)?.job_id || null, feedback:text.value})) feedbackDrafts.delete(key);
+    }, 'primary').disabled = workflowBusy;
+  } else if (!artifact) {
     el('p', currentPage === 'preview' ? 'Chưa có clip để duyệt. Hãy quay lại thiết kế cảnh.' : 'Chưa có phiên bản để góp ý hoặc duyệt.', parent, 'muted');
   } else {
     const active = state.scene_revisions.find(r => r.affected.includes(sid) && !['completed','cancelled'].includes(r.status));
     const isLatest = artifact === latest(sid,artifact.stage);
     if (artifact.invalidated) el('p','Đầu vào đã thay đổi. Phiên bản này chỉ dùng để xem lịch sử.',parent,'feedback-help');
     if (!isLatest) el('p', 'Bạn đang xem bản cũ. Chọn bản mới nhất để gửi góp ý hoặc duyệt.', parent, 'feedback-help');
-    const designLocked = artifact.stage === 'scene_design' && (review?.status === 'approved' || state.stage !== 'scene_design');
+    const designLocked = artifact.stage === 'scene_design' && state.stage !== 'scene_design';
     if (!active && isLatest && !designLocked && !artifact.invalidated && state.stage !== 'completed') {
       const wrapper = el('label', undefined, parent, 'field'); el('span', 'Điều cần chỉnh sửa', wrapper);
       const text = el('textarea', undefined, wrapper); text.id = 'feedback-text'; text.placeholder = 'Ví dụ: giữ phần minh họa lâu hơn để người xem theo kịp…'; text.setAttribute('aria-label', 'Góp ý'); text.maxLength = 10000;
@@ -241,6 +261,7 @@ function renderFeedback(artifact, artifacts) {
         if (submitted) feedbackDrafts.delete(key);
       });
       if (['pending', 'changes_requested'].includes(review?.status)) button(actions, artifact.stage === 'scene_design' ? 'Duyệt thiết kế' : 'Duyệt bản dựng', () => action('approve', {stage:artifact.stage, scene_id:sid, version:artifact.version, sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid + ':' + artifact.version]?.sha256 || artifact.manim_render?.sha256}), 'primary');
+      if (artifact.stage === 'scene_design' && review?.status === 'approved') button(actions, 'Đã duyệt', () => {}).disabled = true;
       el('small', state.ai_backend === 'codex' ? 'Góp ý dùng hạn mức Codex để tạo bản mới. Thiết kế thay đổi sẽ cần bạn duyệt trước khi dựng.' : 'Góp ý dùng ngân sách dự án để tạo bản mới. Thiết kế thay đổi sẽ cần bạn duyệt trước khi dựng.', parent, 'feedback-help');
     } else if (designLocked) {
       el('p', 'Thiết kế này đã được chốt. Để yêu cầu thay đổi, hãy góp ý trên bản dựng của cảnh.', parent, 'feedback-help');

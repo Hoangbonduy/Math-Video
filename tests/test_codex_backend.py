@@ -54,6 +54,51 @@ class CodexBackendTests(unittest.TestCase):
         self.assertNotIn('FPT_API_KEY',self.kwargs['env']);self.assertNotIn('OPENROUTER_API_KEY',self.kwargs['env']);self.assertNotIn('OPENAI_API_KEY',self.kwargs['env']);self.assertNotIn('CODEX_API_KEY',self.kwargs['env'])
         self.assertIn('read-only',self.argv);self.assertIn('shell_tool',self.argv);self.assertIn('--ignore-user-config',self.argv)
         trace=self.root/'codex_calls'/job['calls'][0]['call_id'];self.assertTrue((trace/'events.jsonl').is_file());self.assertTrue((trace/'prompt.txt').is_file())
+    def test_reconnected_completed_turn_is_saved_and_cached(self):
+        launch_success=self.process(dict(answer='ok'))
+        def launch(argv,**kwargs):
+            process=launch_success(argv,**kwargs)
+            communicate=process.communicate
+            def with_reconnect(*args,**kw):
+                stdout,stderr=communicate(*args,**kw)
+                notice=json.dumps(dict(type='error',message='Reconnecting... 2/5 (workspace routing discovery failed)'))
+                return notice+'\n'+stdout,stderr
+            process.communicate=with_reconnect
+            return process
+        job=self.job();session=Session(self.root,job,CodexClient())
+        with patch('src.shared.codex_client.subprocess.Popen',side_effect=launch) as run:
+            result=session.call('draft',[],schema=dict(type='object'))
+            self.assertEqual(json.loads(result['choices'][0]['message']['content']),dict(answer='ok'))
+            self.assertEqual(session.call('draft',[]),result)
+            self.assertEqual(run.call_count,1)
+        self.assertEqual(job['calls'][0]['status'],'complete')
+
+    def test_terminal_failure_or_nonzero_exit_still_rejects_a_final_file(self):
+        for terminal,returncode in [(True,0),(False,1)]:
+            with self.subTest(terminal=terminal,returncode=returncode):
+                launch_success=self.process(dict(answer='stale'))
+                def launch(argv,**kwargs):
+                    process=launch_success(argv,**kwargs);process.returncode=returncode
+                    communicate=process.communicate
+                    def failed(*args,**kw):
+                        stdout,stderr=communicate(*args,**kw)
+                        if terminal:stdout+='\n'+json.dumps(dict(type='turn.failed',error=dict(message='Connection failed')))
+                        return stdout,stderr
+                    process.communicate=failed
+                    return process
+                with patch('src.shared.codex_client.subprocess.Popen',side_effect=launch):
+                    with self.assertRaisesRegex(WorkflowError,'CODEX_FAILED'):
+                        Session(self.root,self.job(),CodexClient()).call('draft',[])
+
+    def test_reconnect_without_completion_still_fails(self):
+        class Incomplete:
+            pid=999999;returncode=0
+            def communicate(self,*args,**kwargs):
+                return json.dumps(dict(type='error',message='Reconnecting... (workspace routing discovery failed)')),''
+        with patch('src.shared.codex_client.subprocess.Popen',return_value=Incomplete()):
+            with self.assertRaisesRegex(WorkflowError,'CODEX_FAILED'):
+                Session(self.root,self.job(),CodexClient()).call('draft',[])
+
     def test_vision_uses_actual_image_attachment(self):
         client=CodexClient(vision=True);job=self.job()
         content=[dict(type='text',text='Inspect image'),dict(type='image_url',image_url=dict(url='data:image/png;base64,'+base64.b64encode(b'image fixture').decode()))]

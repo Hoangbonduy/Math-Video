@@ -17,7 +17,7 @@ try:
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.goto(url+'/#preview')
         page.get_by_role('heading',name='Nhạc nền',exact=True).wait_for()
-        assert page.get_by_label('Giọng đọc',exact=True).input_value()=='vi-VN-NamMinhNeural'
+        assert page.get_by_label('Giọng đọc',exact=True).count()==0
         select=page.get_by_label('Bài nhạc',exact=True)
         assert select.locator('option').count()==6
         select.select_option('relaxation-05')
@@ -41,7 +41,7 @@ try:
         wait_for_mix('relaxation-05',10)
         page.locator('#continuous-video').evaluate('(v)=>{v.preload="auto";v.load();}')
         page.wait_for_function('() => document.querySelector("#continuous-video").videoWidth===640')
-        for name in ('Tải âm thanh WAV','Tải lời đọc riêng','Tải video MP4','Tải phụ đề SRT'):
+        for name in ('Tải video MP4',):
             link=page.get_by_role('link',name=name,exact=True)
             response=page.request.get(url+link.get_attribute('href'));assert response.ok
         assert calls.read_text()==initial_calls,'Music edit unexpectedly synthesized speech'
@@ -61,7 +61,7 @@ try:
         assert calls.read_text()==initial_calls
         assert not errors,errors
         browser.close()
-    print('PASS: Nam Minh default; five tracks; MP3 playback; select/change/remove music; volume/ducking; WAV/MP4/SRT downloads; no repeat TTS; desktop/mobile; no JS errors')
+    print('PASS: voice controls removed; five tracks; MP3 playback; select/change/remove music; volume/ducking; MP4 download; no repeat TTS; desktop/mobile; no JS errors')
 finally:
     fixture.terminate()
     try:fixture.communicate(timeout=10)

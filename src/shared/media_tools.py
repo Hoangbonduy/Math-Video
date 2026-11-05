@@ -19,7 +19,19 @@ def run(args,timeout=600):
     try:
         env=os.environ.copy()
         for key in ("FPT_API_KEY","OPENROUTER_API_KEY"): env.pop(key,None)
-        result=subprocess.run(args,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
+        from src.shared.task_control import current_control, checkpoint, watch_process
+        checkpoint()
+        if current_control():
+            process=subprocess.Popen(args,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=(os.name=='posix'))
+            try:
+                with watch_process(process):
+                    stdout,stderr=process.communicate(timeout=timeout)
+                result=subprocess.CompletedProcess(args,process.returncode,stdout,stderr)
+            finally:
+                if process.poll() is None:
+                    process.kill();process.wait()
+        else:
+            result=subprocess.run(args,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
     except subprocess.TimeoutExpired: raise WorkflowError('MEDIA_TIMEOUT','Media process timed out') from None
     if result.returncode: raise WorkflowError('MEDIA_FAILED',result.stderr.decode(errors='replace')[-2000:])
     return result.stdout

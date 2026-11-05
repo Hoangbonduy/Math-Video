@@ -26,6 +26,7 @@ from src.shared.review import record_review
 from src.shared.workflow import create_project, get_status, run_workflow
 from tests.ai_support import FakeRouter, fake_fetch
 
+CLOSING = 'Đăng ký kênh Axiora để biết thêm chi tiết.'
 QUESTION = 'Bạn cần gấp thêm mấy lần để đi xa gấp đôi?'
 LINES = [
     'Một tờ giấy có thể vươn xa tới Mặt Trăng?',
@@ -37,13 +38,13 @@ LINES = [
     'Vậy đến lần 42, độ dày ấy đã vượt tới Mặt Trăng.',
     'Nhưng ngoài đời, tờ giấy sẽ kẹt sau vài lần gấp.',
     QUESTION,
-    rules.CLOSING_SENTENCE,
+    CLOSING,
 ]
 GOAL = '\n'.join([
     '1. Hook: ' + LINES[0], '2. Xuất phát: Gấp đôi độ dày.',
     '3. Leo: Landmark 81 rồi Fansipan.', '4. Payoff: Vượt Mặt Trăng.',
     '5. Twist + Câu hỏi cuối: ' + LINES[-3] + ' ' + QUESTION + ' (đáp án: 1)',
-    '6. Câu chốt: ' + rules.CLOSING_SENTENCE,
+    '6. Câu chốt: ' + CLOSING,
 ])
 SOURCE = 'Each fold doubles the thickness. After 42 folds, 0.1 mm exceeds the distance to the Moon.'
 
@@ -68,7 +69,7 @@ def script_fixture(with_question=True):
                      evidence=[dict(source_id='source_01', quote='Each fold doubles the thickness.')])],
         scenes=[dict(scene_id=f's{index+1}', narration=' '.join(group),
                      visual_intent='Hiện 0,1 mm và các mốc so sánh. ' + (QUESTION if with_question else '') +
-                                   ' Tờ giấy tiếp tục chuyển động khi đọc câu chốt.', claim_refs=['claim_01'])
+                                   ' Không hiển thị đáp án. Tờ giấy tiếp tục chuyển động khi đọc câu chốt.', claim_refs=['claim_01'])
                 for index, group in enumerate(groups)])
 
 
@@ -79,7 +80,7 @@ def draft_fixture(with_question=True):
 
 
 def brief_fixture(with_question=True):
-    goal = GOAL if with_question else GOAL.replace(QUESTION + ' (đáp án: 1)', '')
+    goal = GOAL if with_question else '\n'.join(line for line in GOAL.splitlines() if not line.startswith('5.'))
     return inputs(dict(topic='Gấp giấy', goal=goal, duration='30–60 giây'))[1]
 
 
@@ -114,7 +115,7 @@ class GuidelineRouter(FakeRouter):
                 sentences = _sentences(draft['narration'])
                 groups = [[sentence] for sentence in sentences[:-3]] + [sentences[-3:]]
                 value['scenes'] = [dict(scene_id=f's{index+1}', narration=' '.join(group),
-                    visual_intent='Hiện chữ: ' + QUESTION + ' Hình tiếp tục chuyển động trong lúc đọc câu chốt.', claim_refs=['claim_01'])
+                    visual_intent='Hiện chữ: ' + QUESTION + ' Không hiển thị đáp án. Hình tiếp tục chuyển động trong lúc đọc câu chốt.', claim_refs=['claim_01'])
                     for index, group in enumerate(groups)]
             elif 'needs_research' in schema:
                 return result
@@ -125,18 +126,18 @@ class GuidelineRouter(FakeRouter):
 
 
 class GuidelineChecks(unittest.TestCase):
-    def test_dynamic_loading_precedence_missing_empty_and_hash_changes(self):
+    def test_only_canonical_guideline_is_loaded(self):
         with TemporaryDirectory() as temp:
-            main, supplied = Path(temp) / 'guidelines.md', Path(temp) / 'supplied.md'
-            with patch.object(rules, 'GUIDELINE_PATH', main), patch.object(rules, 'SUPPLIED_GUIDELINE_PATH', supplied):
+            main = Path(temp) / 'guidelines' / 'guidelines.md'
+            with patch.object(rules, 'GUIDELINE_PATH', main):
                 with self.assertRaisesRegex(store.WorkflowError, 'GUIDELINE_MISSING'):
                     rules.load_guidelines()
-                supplied.write_text('Quy tắc được cung cấp', encoding='utf-8')
-                fallback, digest = rules.load_guidelines()
-                self.assertEqual(len(digest), 64)
-                main.write_text('Quy tắc gốc', encoding='utf-8')
+                main.parent.mkdir()
+                main.write_text('Quy tắc hiện tại', encoding='utf-8')
+                text, digest = rules.load_guidelines()
+                self.assertEqual(text, 'Quy tắc hiện tại')
+                main.write_text('Quy tắc mới', encoding='utf-8')
                 self.assertNotEqual(rules.load_guidelines()[1], digest)
-                self.assertEqual(rules.load_guidelines()[0], 'Quy tắc gốc')
                 main.write_text('  ', encoding='utf-8')
                 with self.assertRaisesRegex(store.WorkflowError, 'GUIDELINE_EMPTY'):
                     rules.load_guidelines()
@@ -177,10 +178,10 @@ class GuidelineChecks(unittest.TestCase):
 
     def test_exact_separate_closing_sentence_is_mandatory(self):
         draft = draft_fixture()
-        for closing in ('Đăng ký Axiora nhé.', rules.CLOSING_SENTENCE + ' Hết.',
-                        rules.CLOSING_SENTENCE[:-1], 'Vậy ' + rules.CLOSING_SENTENCE):
+        for closing in ('Đăng ký Axiora nhé.', CLOSING + ' Hết.',
+                        CLOSING[:-1], 'Vậy ' + CLOSING):
             with self.subTest(closing=closing), self.assertRaises(store.WorkflowError):
-                validate_narration(dict(draft, narration=draft['narration'].replace(rules.CLOSING_SENTENCE, closing)),
+                validate_narration(dict(draft, narration=draft['narration'].replace(CLOSING, closing)),
                                    sources(), brief_fixture())
 
     def test_evidence_and_duration_checked_before_and_after_critic(self):
@@ -190,18 +191,20 @@ class GuidelineChecks(unittest.TestCase):
         with self.assertRaisesRegex(store.WorkflowError, 'verbatim'):
             validate_narration(wrong, sources(), brief_fixture())
         with self.assertRaisesRegex(store.WorkflowError, 'duration'):
-            validate_critique(critique_fixture(rules.CLOSING_SENTENCE, False), draft, sources(), brief_fixture())
+            validate_critique(critique_fixture(CLOSING, False), draft, sources(), brief_fixture())
 
-    def test_fillers_long_numbers_and_sentence_length(self):
-        for sentence in ('Đó là sức mạnh của phép toán.', 'Nó vượt qua những đỉnh núi.',
-                         'Nó dày 440.000 km, vượt mốc 384.400 km.',
-                         'Nó dày bốn trăm bốn mươi nghìn mét, vượt ba trăm tám mươi tư nghìn mét.',
-                         ' '.join(['tiếng'] * 19) + '.'):
-            with self.subTest(sentence=sentence):
-                text = draft_fixture()['narration'].replace(LINES[3], sentence)
-                self.assertTrue(check_continuous_narration_rules(text, brief_fixture()))
-        self.assertTrue(check_continuous_narration_rules(
-            draft_fixture()['narration'].replace(LINES[3], ' '.join(['tiếng'] * 17) + '.'), brief_fixture()))
+    def test_lead_ins_and_spoken_length_are_reviewed_by_critic(self):
+        # These phrases are no longer prohibited by literal phrase matching.
+        for sentence in ('Cùng tìm hiểu nhé.', 'Đó là sức mạnh của phép toán.',
+                         ' '.join(['tiếng'] * 17) + '.', ' '.join(['tiếng'] * 20) + '.'):
+            text = draft_fixture()['narration'].replace(LINES[3], sentence)
+            self.assertEqual(check_continuous_narration_rules(text, brief_fixture()), [])
+        prompt = critic_messages('Giấy', brief_fixture(), draft_fixture())[0]['content']
+        self.assertIn('tối đa 20 tiếng', prompt)
+        self.assertIn('sau khi chuyển chữ số và phép tính thành lời', prompt)
+        self.assertIn('Không dùng danh sách cụm từ cấm', prompt)
+        self.assertNotIn('8–14 tiếng', prompt)
+        self.assertNotIn('tối đa không quá 16 tiếng', prompt)
 
     def test_last_scene_allows_two_three_or_four_sentences(self):
         for count in (2, 3, 4):
@@ -226,7 +229,7 @@ class GuidelineChecks(unittest.TestCase):
         for mutate in (lambda s: s['scenes'][0].update(scene_id='scene_01'),
                        lambda s: s['scenes'][2].update(scene_id='s9'),
                        lambda s: s['scenes'][0].update(narration='Câu một. Câu hai. Câu ba.'),
-                       lambda s: s['scenes'][-1].update(narration=rules.CLOSING_SENTENCE),
+                       lambda s: s['scenes'][-1].update(narration=CLOSING),
                        lambda s: s['scenes'][-1].update(visual_intent='Chỉ có hình')):
             script = script_fixture(); mutate(script)
             with self.assertRaises(store.WorkflowError):
@@ -264,10 +267,12 @@ class GuidelineChecks(unittest.TestCase):
         self.assertEqual(draft['narration'], revised)
         validate_critique(critique_fixture(revised), draft, sources(), brief_fixture())
 
-    def test_ui_explains_closing_and_vietnamese_landmarks(self):
+    def test_ui_explains_optional_endings(self):
         text = Path(__file__).with_name('web.js').read_text()
-        self.assertIn('6. Câu chốt:', text)
-        self.assertIn('Landmark 81, Fansipan', text)
+        self.assertIn('6. Câu chốt (tùy chọn):', text)
+        self.assertIn('Dòng 5 và 6 tùy chọn độc lập', text)
+        self.assertNotIn('Gồm đúng 6 dòng', text)
+        self.assertNotIn('Twist bắt buộc', text)
         self.assertNotIn('6. Số hiện hình:', text)
 
 
@@ -298,7 +303,7 @@ class GuidelinePipeline(unittest.TestCase):
         script = store.read_json(directory / 'script.json')['script']
         self.assertEqual(' '.join(scene['narration'] for scene in script['scenes']), approved['narration'])
         self.assertTrue(store.read_json(directory / 'critique.json')['all_passed'])
-        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], 4)
+        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], 5)
         run_workflow(self.project, ai=True)
         self.assertEqual(len(self.router.requests), 4)
 
@@ -307,7 +312,7 @@ class GuidelinePipeline(unittest.TestCase):
             with self.assertRaisesRegex(store.WorkflowError, 'TEST_STOP'):
                 run_workflow(self.project, ai=True)
         self.assertEqual(len(self.router.requests), 3)
-        with patch('src.idea.generation.load_guidelines', side_effect=AssertionError('Use saved snapshot')):
+        with patch('src.idea.generation.load_guidelines', wraps=rules.load_guidelines):
             state = run_workflow(self.project, ai=True)
         self.assertEqual(state['status'], 'awaiting_review')
         self.assertEqual(len(self.router.requests), 4)
@@ -381,21 +386,6 @@ class GuidelinePipeline(unittest.TestCase):
         self.assertEqual(state['generation']['request_count'], 6)
         self.assertEqual(state['pending_reviews'][0]['version'], 'v002')
 
-    def test_legacy_v1_v2_sessions_keep_original_phases_and_schemas(self):
-        for version in (1, 2, 3):
-            directory = Path(self.temp.name) / f'legacy_{version}'; directory.mkdir()
-            router = GuidelineRouter() if version == 3 else FakeRouter()
-            fingerprint = dict(model=MODEL, prompt_version=version)
-            if version == 3:
-                fingerprint['guidelines_sha256'] = rules.load_guidelines()[1]
-            job = dict(job_id='legacy', input=fingerprint,
-                       pricing=router.preflight(), calls=[], base_version=None)
-            with patch('src.idea.research.fetch_html', side_effect=source_fetch if version == 3 else fake_fetch):
-                _produce(Session(directory, job, router), 'Legacy', brief_fixture() if version == 3 else normalize_brief())
-            expected = (['search', 'draft'] if version == 1 else ['search', 'narration', 'draft']
-                        if version == 2 else ['search', 'narration', 'critic', 'draft'])
-            self.assertEqual([call['phase'] for call in job['calls']], expected)
-            self.assertEqual((directory / 'critique.json').exists(), version == 3)
 
 
 if __name__ == '__main__':

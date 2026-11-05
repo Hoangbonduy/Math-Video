@@ -6,16 +6,16 @@ let savingScriptScene = null;
 
 function ideaStorageKey() { return 'math-video-idea:' + state.project_id; }
 function captureIdea() {
-  if (!$('idea-form')) return ideaDraft;
+  if (!$('idea-form')) return ideaDraft || state.idea_draft || state.idea || state.idea_defaults || {};
   const values = Object.fromEntries(new FormData($('idea-form')));
-  const file = $('idea-reference').files[0];
-  values.reference = file?.name || $('idea-reference-name').textContent;
   ideaDraft = values;
   try { localStorage.setItem(ideaStorageKey(), JSON.stringify(values)); } catch { /* Server persistence remains available. */ }
   return values;
 }
 async function saveIdea() {
-  return action('idea-draft', {idea:captureIdea()});
+  const ok = await action('idea-draft', {idea:captureIdea()});
+  if (ok) window.location.assign('/projects');
+  return ok;
 }
 async function startIdea() {
   const form = $('idea-form');
@@ -42,16 +42,16 @@ function renderIdea() {
   field(content, 'Chủ đề / câu hỏi mở đầu', 'textarea', draft.topic ?? state.topic, 'topic').required = true;
   const goal = field(content, 'Ý tưởng kịch bản', 'textarea', draft.goal ?? context.script?.main_idea, 'goal');
   goal.className = 'tall';
-  goal.placeholder = 'Viết 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:\n1. Hook: điều nghe vô lý [1 câu]\n2. Xuất phát: chỉ 1 quy tắc / 1 con số gốc\n3. Leo: 2–3 mốc quen thuộc tại Việt Nam (Landmark 81, Fansipan…), tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…\n4. Payoff: trả lời đúng câu đã hỏi ở Hook\n5. Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.\n6. Câu chốt: “Đăng ký kênh Axiora để biết thêm chi tiết.” (kèm ghi chú số hiện hình nếu cần).';
+  goal.placeholder = 'Viết các ý theo thứ tự, mỗi dòng một ý. Dòng 5 và 6 tùy chọn độc lập; giữ số thứ tự khi bỏ dòng:\n1. Hook: câu hỏi mở đầu\n2. Xuất phát: quy tắc hoặc dữ kiện gốc\n3. Leo: các mốc tăng dần, nối ý tự nhiên\n4. Payoff: trả lời câu hỏi ở Hook\n5. Twist/câu hỏi cuối (tùy chọn): dùng câu hỏi đã cho hoặc viết câu hỏi theo nội dung dòng này; đáp án ghi trong ngoặc sẽ không được đọc\n6. Câu chốt (tùy chọn): ghi nguyên văn toàn bộ câu chốt bạn muốn, có thể gồm nhiều câu.';
   const goalGuide = el('small', undefined, goal.parentElement, 'field-guide');
-  el('span', 'Gồm đúng 6 dòng, mỗi dòng 1 ý, đọc liền không khựng:', goalGuide);
+  el('span', 'Các ý đi theo thứ tự dưới đây. Dòng 5 và 6 tùy chọn độc lập; giữ số thứ tự khi bỏ dòng:', goalGuide);
   const goalList = el('ol', undefined, goalGuide);
-  el('li', 'Hook: điều nghe vô lý [1 câu]', goalList);
-  el('li', 'Xuất phát: chỉ 1 quy tắc / 1 con số gốc', goalList);
-  el('li', 'Leo: 2–3 mốc quen thuộc tại Việt Nam (Landmark 81, Fansipan…), tăng dần, ghi rõ từ nối: rồi / đến lần… / gấp tiếp thì…', goalList);
-  el('li', 'Payoff: trả lời đúng câu đã hỏi ở Hook', goalList);
-  el('li', 'Twist bắt buộc + Câu hỏi cuối tùy chọn: 1 câu twist; chỉ thêm 1 câu hỏi khi dòng 5 có sẵn câu hỏi. Nếu có, câu hỏi có đáp án là 1 con số hoặc 1 tên gọi. Ghi đáp án trong ngoặc, không đọc ra.', goalList);
-  el('li', 'Câu chốt: “Đăng ký kênh Axiora để biết thêm chi tiết.” (kèm ghi chú số hiện hình nếu cần).', goalList);
+  el('li', 'Hook: câu hỏi mở đầu', goalList);
+  el('li', 'Xuất phát: quy tắc hoặc dữ kiện gốc', goalList);
+  el('li', 'Leo: các mốc tăng dần, nối ý tự nhiên', goalList);
+  el('li', 'Payoff: trả lời câu hỏi ở Hook', goalList);
+  el('li', 'Twist/câu hỏi cuối (tùy chọn): dùng câu hỏi đã cho; nếu chưa có câu hỏi hoàn chỉnh, viết theo nội dung dòng này. Không đọc hoặc hiện đáp án.', goalList);
+  el('li', 'Câu chốt (tùy chọn): giữ nguyên toàn bộ nội dung bạn nhập, kể cả nhiều câu; đặt ở cuối lời đọc.', goalList);
   const row = el('div', undefined, content, 'field-row');
   field(row, 'Người xem', 'input', draft.audience ?? brief.audience, 'audience');
   const duration = field(row, 'Độ dài dự kiến', 'input', draft.duration ?? (brief.min_seconds ? brief.min_seconds + '–' + brief.max_seconds + ' giây' : '30–60 giây'), 'duration');
@@ -70,11 +70,6 @@ function renderIdea() {
   const styleList = el('ol', undefined, styleGuide);
   el('li', 'Đối tượng chính + chuyển động: là gì, biến đổi thế nào?', styleList);
   el('li', 'Khi scale vỡ thì chuyển sang mốc so sánh nào?', styleList);
-  const reference = el('label', undefined, direction, 'field'); el('span', 'Tài liệu / video tham khảo', reference);
-  const file = el('input', undefined, reference, 'reference-file'); file.type = 'file'; file.id = 'idea-reference';
-  const fileName = el('small', draft.reference || 'Chưa chọn tệp', reference); fileName.id = 'idea-reference-name';
-  file.onchange = () => { fileName.textContent = file.files[0]?.name || 'Chưa chọn tệp'; };
-  el('small', 'Bản nháp chỉ ghi nhận tên tệp; tài liệu chưa được tải lên hoặc đưa vào kịch bản.', reference);
   const formats = el('fieldset', undefined, direction); formats.className = 'format-choices';
   el('legend', 'Phiên bản chính', formats);
   for (const [value, text] of [['landscape', 'YouTube · video ngang'], ['portrait', 'Facebook · video dọc']]) {
@@ -299,10 +294,6 @@ function showCurrentScript() {
   requestAnimationFrame(() => $('script-review')?.scrollIntoView({behavior:'smooth', block:'start'}));
 }
 async function newIdea() {
-  ideaDraft = {...(state.idea_defaults || {topic:'', goal:'', audience:'', duration:'30–60 giây', style:'', reference:'', format:'landscape'})};
-  $('idea-form')?.remove();
-  scriptExpanded = false;
-  navigate('idea');
-  await action('idea-draft', {idea:ideaDraft});
-  $('idea-topic')?.focus();
+  // Preserve the current project; the launcher creates the next one separately.
+  await saveIdea();
 }

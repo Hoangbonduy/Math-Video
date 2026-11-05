@@ -36,3 +36,9 @@ assert.match(vm.runInContext('sceneRepairLabel({trial_mode:true,max_repairs:2,re
 assert.match(vm.runInContext('sceneRepairLabel({trial_mode:true,max_repairs:0})',context),/Kh\u00f4ng t\u1ef1 s\u1eeda/);
 assert.match(vm.runInContext('sceneRepairLabel({trial_mode:true})',context),/Kh\u00f4ng t\u1ef1 s\u1eeda/);
 console.log('PASS: UI reports actual repair limits and preserves legacy single-pass labels.');
+
+const controls = fs.readFileSync(path.join(__dirname,'../src/shared/review_web/app.js'),'utf8');
+assert.ok(!controls.includes('Chạy lại cảnh này'));
+assert.ok(!controls.includes('Dựng lại thiết kế đã lưu'));
+assert.match(controls, /'Tạo cảnh này'.*new_attempt:true/);
+console.log('PASS: scene controls create a fresh attempt with one creation button.');

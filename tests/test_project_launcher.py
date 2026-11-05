@@ -68,6 +68,33 @@ class LauncherTests(unittest.TestCase):
             reopened = json.load(self.request('/api/projects/open', dict(id=a)))['url']
             self.assertEqual(urlopen(reopened, timeout=5).status, 200)
 
+    def test_review_returns_to_original_launcher(self):
+        with patch('src.shared.review_server.ReviewServer.recover'):
+            identifier = json.load(self.request('/api/projects/create', dict(topic='Draft', request_id=str(uuid.uuid4()))))['id']
+            url = json.load(self.request('/api/projects/open', dict(id=identifier)))['url']
+            response = urlopen(url.split('/#')[0] + '/projects', timeout=5)
+            self.assertEqual(response.url.rstrip('/'), self.server.origin)
+            self.assertIn('Tên project mới', response.read().decode())
+            server = self.server.projects[(self.root / identifier).resolve()][0]
+            self.assertIsNone(server.project_launcher)
+
+    def test_direct_review_can_return_to_project_picker(self):
+        from src.shared.review_server import ReviewServer
+        server = ReviewServer(self.root / 'direct', port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            response = urlopen(server.origin + '/projects', timeout=5)
+            self.assertIn('Tên project mới', response.read().decode())
+            self.assertEqual(response.url.rstrip('/'), server.projects_url())
+            projects = json.load(urlopen(response.url.rstrip('/') + '/api/projects', timeout=5))['projects']
+            self.assertEqual([item['id'] for item in projects], ['direct'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertIsNone(server.project_launcher)
+
     def test_existing_nested_project_and_invalid_requests(self):
         wf.create_project(self.root / 'old' / 'video_moi', 'Existing')
         (self.root / 'bad').mkdir()

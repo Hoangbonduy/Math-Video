@@ -81,18 +81,18 @@ class PhaseSpecificChecks(unittest.TestCase):
         self.assertIn('Câu hỏi tương tác không cần trích dẫn nguồn', prompt)
 
     def test_critic_rubric_and_schema_exclude_phase_two(self):
-        self.assertEqual(len(CRITIQUE_RULES), 17)
-        self.assertNotIn('rule_13', CRITIQUE_RULES)
+        self.assertEqual(len(CRITIQUE_RULES), 13)
+        self.assertNotIn('rule_9', CRITIQUE_RULES)
         enum = CRITIQUE_SCHEMA['properties']['checks']['items']['properties']['rule']['enum']
-        self.assertNotIn('rule_13', enum)
+        self.assertNotIn('rule_9', enum)
         for messages in (critic_messages('Giấy', brief_fixture(), draft_fixture()),
                          narration_messages('Giấy', brief_fixture(), sources())):
             self.assertNotIn('## PHẦN B', messages[0]['content'])
             self.assertNotIn('- [Pha 2]', messages[0]['content'])
         draft = draft_fixture()
         critique = critique_fixture(draft['narration'])
-        critique['checks'][0]['rule'] = 'rule_13'
-        with self.assertRaisesRegex(store.WorkflowError, 'không có rule_13'):
+        critique['checks'][0]['rule'] = 'rule_9'
+        with self.assertRaisesRegex(store.WorkflowError, 'không có rule_9'):
             validate_critique(critique, draft, sources(), brief_fixture())
 
     def test_closing_visual_requires_display_text_and_motion(self):
@@ -101,10 +101,10 @@ class PhaseSpecificChecks(unittest.TestCase):
                        'Hiện chữ: ' + QUESTION + ' Hình tĩnh trong lúc đọc câu chốt.',
                        'Hiện chữ: ' + QUESTION + ' Không chuyển động khi đọc câu chốt.'):
             script = script_fixture(); script['scenes'][-1]['visual_intent'] = visual
-            with self.subTest(visual=visual), self.assertRaisesRegex(store.WorkflowError, 'Quy tắc 13'):
+            with self.subTest(visual=visual), self.assertRaisesRegex(store.WorkflowError, 'Quy tắc 9'):
                 validate_editorial(script, draft_fixture()['narration'], brief_fixture())
         script = script_fixture()
-        script['scenes'][-1]['visual_intent'] = 'Hiện chữ: ' + QUESTION + ' Quả cầu vẫn xoay khi đọc câu chốt.'
+        script['scenes'][-1]['visual_intent'] = 'Hiện chữ: ' + QUESTION + ' Không hiển thị đáp án. Quả cầu vẫn xoay khi đọc câu chốt.'
         validate_editorial(script, draft_fixture()['narration'], brief_fixture())
 
     def test_no_question_ending_still_requires_motion_at_closing(self):

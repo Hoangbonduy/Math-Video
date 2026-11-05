@@ -123,7 +123,9 @@ def plan(root, source, phrases, segments, seconds, fps):
         info = probe(store.project_path(root, source['clip']['path']))
         video = next(s for s in info['streams'] if s['codec_type'] == 'video')
         numerator, denominator = map(float, video['avg_frame_rate'].split('/'))
-        tolerance = max(tolerance, denominator / numerator + 1e-6)
+        # Encoding rounds the storyboard to a native frame; preview then rounds
+        # that duration up to its own frame grid. Both errors can accumulate.
+        tolerance += denominator / numerator
     groups = _groups(story, phrases, seconds, tolerance)
     result, picture_start, output_start, phrase_start = [], 0, 0, 0
     picture_frames = round(seconds * fps)

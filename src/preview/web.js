@@ -1,45 +1,8 @@
 'use strict';
 let musicDraft = null;
 
-function renderVoice() {
-  if(currentPage !== 'preview') return;
-  const panel=el('details',undefined,$('voice-panel'),'card revision-panel');
-  const savedConfig=state.audio_generation.config;
-  const config=voiceDraft || savedConfig;
-  const edge=config.provider==='edge';
-  el('summary','Cấu hình giọng đọc · '+(edge?'Microsoft Edge':'FPT'),panel);
-  panel.id='voice-settings-panel';panel.open=voiceSettingsOpen;
-  panel.addEventListener('toggle',()=>{if(panel.isConnected)voiceSettingsOpen=panel.open;});
-  el('p',edge?'Giọng Microsoft Edge online · Không cần API key · Cần kết nối Internet.':state.audio_generation.cost_is_unknown || config.allow_unpriced?'Chi phí FPT chưa xác định · '+(state.audio_generation.unpriced_characters || 0)+' ký tự chưa tính USD.':`Dự phòng/ước tính C7: ${state.audio_generation.reserved_usd.toFixed(4)} / 0,50 USD.`,panel);
-  const row=el('div',undefined,panel,'voice-settings');
-  const provider=field(row,'Nguồn giọng đọc','select','','provider');provider.setAttribute('aria-label','Nguồn giọng đọc');
-  for(const [value,text] of [['edge','Microsoft Edge · Không cần API key'],['fpt','FPT · API key']]){const option=el('option',text,provider);option.value=value;}provider.value=config.provider;
-  const voice=field(row,'Giọng đọc','select','','voice');voice.setAttribute('aria-label','Giọng đọc');
-  const voices=edge?[['vi-VN-HoaiMyNeural','Hoài Mỹ · Nữ tiếng Việt'],['vi-VN-NamMinhNeural','Nam Minh · Nam tiếng Việt']]:[['leminh','Lê Minh · miền Bắc'],['giahuy','Gia Huy · miền Trung']];
-  for(const [value,text] of voices){const option=el('option',text,voice);option.value=value;}voice.value=config.voice;
-  const speed=field(row,'Tốc độ (-3 đến 3)','input',String(config.speed),'speed');speed.type='number';speed.min='-3';speed.max='3';
-  let price,rate,skip;
-  if(!edge){
-    price=field(row,'Đơn giá gói (VND / 1 triệu ký tự)','input',config.vnd_per_million_chars,'price');price.type='number';price.min='0.01';price.step='any';
-    rate=field(row,'Tỷ giá dự phòng (VND / USD)','input',config.vnd_per_usd,'rate');rate.type='number';rate.min='1';rate.step='any';
-    const skipLabel=el('label','Tạm bỏ đơn giá và tỷ giá · Chi phí chưa xác định',panel);
-    skip=el('input',undefined,skipLabel);skip.type='checkbox';skip.checked=Boolean(config.allow_unpriced);
-  }
-  const captureVoice=()=>{voiceDraft={...savedConfig,provider:provider.value,voice:voice.value,speed:Number(speed.value),vnd_per_million_chars:price?.value?Number(price.value):null,vnd_per_usd:rate?.value?Number(rate.value):null,allow_unpriced:Boolean(skip?.checked)};};
-  provider.onchange=()=>{voiceDraft={...(voiceDraft || config),provider:provider.value,voice:provider.value==='edge'?'vi-VN-NamMinhNeural':'leminh'};voiceSettingsOpen=true;render();};
-  for(const input of [voice,speed,price,rate,skip].filter(Boolean))input.addEventListener('input',captureVoice);
-  const actions=el('div',undefined,panel,'actions');
-  button(actions,'Lưu cấu hình giọng',async()=>{captureVoice();if(await action('av-settings',{config:voiceDraft}))voiceDraft=null;});
-  const sample=button(actions,'Nghe thử cảnh đầu',async()=>{captureVoice();if(await action('av-settings',{config:voiceDraft})){voiceDraft=null;await action('audio-sample',{});}});
-  sample.disabled=(!edge && !config.allow_unpriced && (!config.vnd_per_million_chars || !config.vnd_per_usd)) || state.stage==='completed';
-  if(state.voice_sample?.path){const audio=el('audio',undefined,panel);audio.controls=true;audio.preload='metadata';audio.src=media(state.voice_sample.path);audio.setAttribute('aria-label','Nghe thử giọng đọc');}
-  for(const job of state.audio_generation.jobs||[]){el('p',job.job_id+' · '+label(job.status)+(job.last_error?' · '+job.last_error:''),panel,'feedback-help');for(const call of job.uncertain_requests||[])button(panel,'Thử lại lượt agent chưa rõ kết quả '+call.slice(0,8),()=>action('av-generate',{scene_id:job.scene_id,retry_uncertain:call}));}
-  for(const call of state.audio_generation.calls||[]){if(['uncertain','in_flight'].includes(call.status))button(panel,'Tiếp tục lượt giọng '+(call.provider==='edge'?'Microsoft':'FPT')+' '+call.id.slice(0,8),()=>action('audio-retry',{call_id:call.id}));}
-  renderMusic();
-}
-
 function renderMusic() {
-  if (!state.music) return;
+  if (currentPage !== 'preview' || !state.music) return;
   const panel=el('section',undefined,$('voice-panel'),'card revision-panel');panel.id='music-settings-panel';
   el('h2','Nhạc nền',panel);
   el('p','Chọn một bài cho cả video. Nghe thử bản phối để kiểm tra nhạc hợp với lời đọc.',panel,'muted');
@@ -67,7 +30,6 @@ function renderMusic() {
   const actions=el('div',undefined,panel,'actions');
   const apply=button(actions,'Lưu và phối nhạc',async()=>{
     capture();
-    if(voiceDraft){if(!await action('av-settings',{config:voiceDraft}))return;voiceDraft=null;}
     if(await action('music-settings',{config:musicDraft})){
       musicDraft=null;
       if(state.continuous_preview?.ready){previewMode='audio';await action('preview-build',{with_audio:true,keep_duration:false});}
@@ -88,14 +50,10 @@ function renderFinal(){
     const actions=el('div',undefined,panel,'actions');button(actions,'Yêu cầu sửa bản ghép',()=>action('feedback',{stage:'final_video',version:artifact.version,sha256:artifact.sha256,feedback:feedback.value}));
     button(actions,'Duyệt video cuối',()=>action('approve',{stage:'final_video',version:artifact.version,sha256:artifact.sha256}),'primary');
   }
-  const links=el('div',undefined,panel,'actions');downloadLink(links,'Tải MP4',artifact.path);downloadLink(links,'Tải âm thanh WAV',artifact.audio_path);downloadLink(links,'Tải lời đọc riêng',artifact.narration_path);downloadLink(links,'Tải phụ đề SRT',artifact.subtitle_path);downloadLink(links,'Danh sách phiên bản đã ghép',artifact.manifest_path);
+  const links=el('div',undefined,panel,'actions');downloadLink(links,'Tải MP4',artifact.path);downloadLink(links,'Danh sách phiên bản đã ghép',artifact.manifest_path);
 }
 
 
-function openVoiceSettings() {
-  const panel = $('voice-settings-panel');
-  if (panel) { panel.open = true; panel.scrollIntoView({behavior:'smooth', block:'center'}); panel.querySelector('select')?.focus(); }
-}
 function renderContinuousPreview() {
   if (currentPage !== 'preview') return;
   const parent = $('continuous-preview');
@@ -109,12 +67,10 @@ function renderContinuousPreview() {
   el('h2', (item?.draft || preview.draft)?'Bản dựng thử · Chưa duyệt':'Bản dựng liền mạch', intro);
   el('p', item ? item.scenes.length + ' cảnh · ' + clock(item.duration) + ' · ' + (item.with_audio ? 'Có lời đọc'+(item.music?.track && item.music.config.volume>0?' · Nhạc: '+item.music.track.title:'') : 'Chưa có tiếng') : 'Các cảnh sẽ được ghép theo thứ tự kịch bản.', intro, 'muted');
   const actions = el('div', undefined, heading, 'actions');
-  button(actions, 'Cấu hình giọng đọc', openVoiceSettings);
   const addVoice = button(actions, preview.audio ? 'Dựng bản có tiếng' : 'Thêm tiếng', async () => {
-    if(voiceDraft){if(!await action('av-settings',{config:voiceDraft}))return;voiceDraft=null;}
     const config = state.audio_generation.config;
     if (config.provider==='fpt' && !config.allow_unpriced && (!config.vnd_per_million_chars || !config.vnd_per_usd)) {
-      openVoiceSettings(); notice('Điền đơn giá FPT và tỷ giá, sau đó lưu cấu hình giọng trước khi thêm tiếng.', true); return;
+      notice('Chưa đủ cấu hình FPT để thêm tiếng: thiếu đơn giá hoặc tỷ giá.', true); return;
     }
     previewMode = 'audio'; await action('preview-build', {with_audio:true, keep_duration:false});
   }, 'primary');
@@ -129,7 +85,7 @@ function renderContinuousPreview() {
   captionToggle.disabled = !item;
   if (building) el('p', 'Đang ghép bản dựng' + (previewMode === 'audio' ? ' và thêm lời đọc' : '') + '… Video sẽ xuất hiện tại đây khi hoàn tất.', parent, 'preview-build-status');
   if (task?.state === 'failed') el('p', task.error || 'Chưa ghép được video. Hãy thử lại.', parent, 'preview-build-error');
-  else if(!preview.audio && state.audio_generation.config.provider==='fpt' && state.audio_generation?.calls?.at(-1)?.http_status===429)el('p','FPT đang giới hạn tần suất gọi (HTTP 429). Đoạn giọng đã tạo được giữ lại trong Nghe thử cảnh đầu; chưa có đủ lời đọc cho toàn bộ video.',parent,'preview-build-error');
+  else if(!preview.audio && state.audio_generation.config.provider==='fpt' && state.audio_generation?.calls?.at(-1)?.http_status===429)el('p','FPT đang giới hạn tần suất gọi (HTTP 429). Đoạn giọng đã tạo được giữ lại; chưa có đủ lời đọc cho toàn bộ video.',parent,'preview-build-error');
   if (!item) {
     emptyViewer(parent, preview.ready ? 'Chưa có bản dựng' : 'Chưa đủ cảnh để ghép', preview.ready ? 'Bấm Ghép bản xem trước hoặc Thêm tiếng để tạo bản dựng.' : preview.message || 'Hoàn tất bản dựng của các cảnh trước.');
   } else {
@@ -170,8 +126,7 @@ function renderContinuousPreview() {
     video.addEventListener('timeupdate', update); video.addEventListener('seeked', update); update();
     video.addEventListener('error', () => notice('Không đọc được video. Hãy ghép lại bản dựng hoặc kiểm tra tệp trên máy.', true));
     const links = el('div', undefined, parent, 'actions preview-downloads');
-    downloadLink(links, 'Tải video MP4', item.path); downloadLink(links, 'Tải âm thanh WAV', item.audio_path); downloadLink(links, 'Tải lời đọc riêng', item.narration_path); downloadLink(links, 'Tải phụ đề SRT', item.subtitle_path);
-    const report=el('a','Tải báo cáo kiểm tra',links);report.href='/api/diagnostics';report.download='bao-cao-kiem-tra.json';
+    downloadLink(links, 'Tải video MP4', item.path);
     if (preview.audio && preview.silent) button(links, item.with_audio ? 'Xem bản không tiếng' : 'Xem bản có tiếng', () => { previewMode = item.with_audio ? 'silent' : 'audio'; render(); });
     el('p', item.with_audio ? 'Lời đọc giữ tốc độ đã chọn; phụ đề căn theo âm thanh thực. Cảnh được kéo dài khi cần để đọc rõ.' : 'Phụ đề đang chia theo thời lượng cảnh. Chọn Thêm tiếng để căn theo thời lượng lời đọc thực.', parent, 'preview-help');
   }

@@ -31,28 +31,69 @@ class ReviewServer(ThreadingHTTPServer):
             from src.idea.service import save_draft, default_values
             save_draft(self.root, default_values())
         wf.get_status(self.root)
-        self.token=secrets.token_urlsafe(32); self.jobs={}; self.jobs_lock=threading.RLock()
+        self.token=secrets.token_urlsafe(32); self.jobs={}; self.jobs_lock=threading.RLock(); self.task_controls={}
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=1)
         from src.shared.codex_auth import CodexAuth
         self.codex_auth=CodexAuth()
         super().__init__(('127.0.0.1',port),Handler)
         self.origin=f'http://127.0.0.1:{self.server_port}'
+        self.launcher_url=None
+        self.project_launcher=None
+
+    def projects_url(self):
+        with self.jobs_lock:
+            if not self.launcher_url:
+                from src.shared.project_launcher import ProjectLauncher
+                launcher=ProjectLauncher(0, self.root.parent)
+                thread=threading.Thread(target=launcher.serve_forever,daemon=True)
+                thread.start()
+                self.project_launcher=(launcher,thread)
+                self.launcher_url=launcher.origin
+            return self.launcher_url
 
     def enqueue(self,key,callback):
         with self.jobs_lock:
             if self.codex_auth.busy:
                 raise WorkflowError('CODEX_AUTH_BUSY','Hoàn tất hoặc hủy đăng nhập Codex trước khi chạy tác vụ.')
-            if key in self.jobs and self.jobs[key]['state'] in ('queued','working'): return
+            if key in self.jobs and self.jobs[key]['state'] in ('queued','working','pausing'): return
+            from src.shared.task_control import TaskControl
+            control=TaskControl(); self.task_controls[key]=control
             self.jobs[key]=dict(state='queued',error=None)
         def work():
             with self.jobs_lock: self.jobs[key]['state']='working'
             try:
-                callback()
+                from src.shared.task_control import task_scope
+                with task_scope(control):
+                    control.check()
+                    callback()
+                    control.check()
                 with self.jobs_lock: self.jobs[key]['state']='done'
             except Exception as exc:
                 from src.shared.openrouter_client import redact
-                with self.jobs_lock: self.jobs[key]=dict(state='failed',error=redact(str(exc)))
+                paused=isinstance(exc,WorkflowError) and exc.code=='TASK_PAUSED'
+                with self.jobs_lock: self.jobs[key]=dict(state='paused' if paused else 'failed',error=None if paused else redact(str(exc)))
         self.pool.submit(work)
+
+    def pause_scene(self,scene_id):
+        state=wf.get_status(self.root)
+        if scene_id not in state['scene_ids']:
+            raise WorkflowError('SCENE_NOT_FOUND','Không có cảnh này.')
+        with self.jobs_lock:
+            keys=['generate:'+scene_id,'preview:'+scene_id]
+            if any(j['scene_id']==scene_id and j['status'] in ('planned','working') for j in state.get('scene_generation',{}).get('jobs',[])):
+                keys.append('workflow')
+            selected=[key for key in keys if self.jobs.get(key,{}).get('state') in ('queued','working','pausing')]
+            if not selected:
+                if any(self.jobs.get(key,{}).get('state')=='paused' for key in keys):return
+                raise WorkflowError('TASK_NOT_RUNNING','Cảnh không có tác vụ đang chạy. Tải lại trang để xem kết quả.')
+            for key in selected:
+                self.jobs[key]['state']='pausing'
+                self.task_controls[key].pause()
+        with store.locked_project(self.root) as root:
+            project,reviews=wf._load(root)
+            script=wf._latest(project,'script',None)
+            project.setdefault('scene_pauses',{})[scene_id]=dict(script_sha256=script['sha256'])
+            wf._save(root,project,reviews)
 
     def continue_scenes(self, scene_id=None, retry_uncertain=None, attempt_id=None):
         stage=wf.get_status(self.root)['stage']
@@ -98,6 +139,12 @@ class ReviewServer(ThreadingHTTPServer):
                 self.enqueue(r['id'],lambda rid=r['id']:rev.resume_revision(self.root,rid))
 
     def server_close(self):
+        if self.project_launcher:
+            launcher,thread=self.project_launcher
+            launcher.shutdown()
+            launcher.server_close()
+            thread.join()
+            self.project_launcher=None
         self.codex_auth.close()
         super().server_close(); self.pool.shutdown(wait=True)
 
@@ -118,6 +165,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._host(): self.send_json(403,dict(error='Invalid host')); return
         url=urlsplit(self.path)
+        if url.path=='/projects':
+            self.send_response(303)
+            self.send_header('Location',self.server.projects_url())
+            self.send_header('Content-Length','0')
+            self.send_header('Cache-Control','no-store')
+            self.end_headers()
+            return
         if url.path=='/api/codex-auth':
             if self.headers.get('X-Review-Token')!=self.server.token:
                 self.send_json(403,dict(error='Invalid local review session')); return
@@ -137,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             state['music']=music_state(self.server.root)
             with self.server.jobs_lock: tasks=dict(self.server.jobs)
             from src.shared.ai_config import get_model
-            self.send_json(200,dict(project=state,token=self.server.token,tasks=tasks,api_version=API_VERSION,codex_auth=self.server.codex_auth.snapshot(),ai_provider=dict(backend=state['ai_backend'],model=get_model()),capabilities=['script_history','new_generation','manim_design','continuous_preview','scene_design_v2','codex_auth','ai_provider'])); return
+            self.send_json(200,dict(project=state,token=self.server.token,tasks=tasks,api_version=API_VERSION,codex_auth=self.server.codex_auth.snapshot(),ai_provider=dict(backend=state['ai_backend'],model=get_model()),capabilities=['script_history','new_generation','manim_design','continuous_preview','scene_design_v2','codex_auth','ai_provider','scene_pause'])); return
         if url.path=='/api/diagnostics':
             from datetime import datetime,timezone
             from src.scene_design.scene_drafts import current as current_drafts
@@ -263,14 +317,14 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(request_id,str) or not 1<=len(request_id)<=100: raise WorkflowError('INVALID_INPUT','Request ID is required')
             if self.path=='/api/ai-provider':
                 with self.server.jobs_lock:
-                    if any(t['state'] in ('queued','working') for t in self.server.jobs.values()) or self.server.codex_auth.busy:
+                    if any(t['state'] in ('queued','working','pausing') for t in self.server.jobs.values()) or self.server.codex_auth.busy:
                         raise WorkflowError('JOB_BUSY','Chờ tác vụ hoặc phiên đăng nhập hoàn tất trước khi đổi nguồn AI.')
                     from src.shared.ai_config import set_backend
                     result=set_backend(data.get('backend'))
                 self.send_json(200,result); return
             if self.path in ('/api/codex-login','/api/codex-logout','/api/codex-login-cancel'):
                 with self.server.jobs_lock:
-                    if any(t['state'] in ('queued','working') for t in self.server.jobs.values()):
+                    if any(t['state'] in ('queued','working','pausing') for t in self.server.jobs.values()):
                         raise WorkflowError('JOB_BUSY','Chờ tác vụ hiện tại hoàn tất trước khi đổi tài khoản Codex.')
                     if self.path=='/api/codex-login-cancel':
                         result=self.server.codex_auth.cancel()
@@ -282,7 +336,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/script-delete':
                 from src.script_history.service import delete
                 with self.server.jobs_lock:
-                    if any(t['state'] in ('queued','working') for t in self.server.jobs.values()):
+                    if any(t['state'] in ('queued','working','pausing') for t in self.server.jobs.values()):
                         raise WorkflowError('JOB_BUSY','Chờ tác vụ đang chạy hoàn tất trước khi xóa kịch bản.')
                     result=delete(self.server.root,data.get('version'),data.get('sha256'))
                 self.send_json(200,result); return
@@ -305,7 +359,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/start':
                 from src.idea.service import apply_idea
                 with self.server.jobs_lock:
-                    if any(t['state'] in ('queued','working') for t in self.server.jobs.values()):
+                    if any(t['state'] in ('queued','working','pausing') for t in self.server.jobs.values()):
                         raise WorkflowError('JOB_BUSY','Đang xử lý. Hãy chờ hoàn tất trước khi bắt đầu lại từ ý tưởng.')
                     apply_idea(root,data['idea'],force_new=True)
                     self.server.jobs.clear()
@@ -375,6 +429,12 @@ class Handler(BaseHTTPRequestHandler):
                 from src.scene_design.scene_replay import generate as replay
                 if not sid:raise WorkflowError('INVALID_INPUT','Chọn một cảnh trước khi dựng.')
                 self.server.enqueue('generate:'+sid,lambda:replay(root,sid,request_id))
+            elif self.path=='/api/pause-scene':
+                self.server.pause_scene(sid)
+            elif self.path=='/api/failed-scene-feedback':
+                from src.scene_design.scene_generation import request_failed_feedback
+                request_failed_feedback(root,sid,data.get('job_id'),data.get('feedback'))
+                self.server.continue_scenes(sid,attempt_id=request_id)
             elif self.path=='/api/continue':
                 rid=data.get('revision_id')
                 fresh=data.get('new_attempt',False)

@@ -29,12 +29,12 @@ try:
         page.screenshot(path=str(output/'final-review-desktop.png'),full_page=True)
         page.get_by_role('button',name='Duyệt video cuối',exact=True).click()
         page.get_by_text('Đã duyệt đúng phiên bản đang xem.',exact=True).wait_for();page.wait_for_timeout(300)
-        for name,filename in [('Tải MP4','final.mp4'),('Tải âm thanh WAV','narration.wav'),('Tải phụ đề SRT','final.srt'),('Danh sách phiên bản đã ghép','final_manifest.json')]:
+        for name,filename in [('Tải MP4','final.mp4'),('Danh sách phiên bản đã ghép','final_manifest.json')]:
             link=page.get_by_role('link',name=name,exact=True);response=page.request.get(url+link.get_attribute('href'));assert response.ok; (output/filename).write_bytes(response.body())
         for screen in ('design','preview'):
             page.goto(url+'/#'+screen);page.get_by_role('heading',level=1).wait_for();page.set_viewport_size({'width':390,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth');page.screenshot(path=str(output/(screen+'-mobile.png')),full_page=True)
         assert not errors,errors;browser.close()
-    print('PASS: native 1080p AV playback, per-scene approvals, assembly, final approval, four downloads, mobile layout, no JS errors')
+    print('PASS: native 1080p AV playback, per-scene approvals, assembly, final approval, MP4 and manifest downloads, mobile layout, no JS errors')
 finally:
     fixture.terminate()
     try:fixture.communicate(timeout=10)

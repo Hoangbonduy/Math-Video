@@ -77,6 +77,7 @@ class ProjectLauncher(ThreadingHTTPServer):
             root = self.project_path(identifier)
             if root not in self.projects:
                 server = ManagedReviewServer(root, port=0)
+                server.launcher_url = self.origin
                 try:
                     server.recover()
                 except Exception:
@@ -206,7 +207,7 @@ HTML = '''<!doctype html>
 <button type="submit">Tạo project</button></div></form>
 <p id="message" role="status" aria-live="polite"></p>
 <h2>Project đã lưu</h2><div id="projects">Đang tải…</div>
-<p class="hint">Các project được lưu riêng trong data/projects. Dùng nút quay lại của trình duyệt để chọn project khác.</p>
+<p class="hint">Các project được lưu riêng trong data/projects. Chọn “Ý tưởng mới” trong project để quay về đây.</p>
 </main></body></html>'''
 
 CSS = '''*{box-sizing:border-box}body{margin:0;background:#f2f6f7;color:#18384a;font:16px/1.6 system-ui,sans-serif}

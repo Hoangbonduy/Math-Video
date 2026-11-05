@@ -78,6 +78,9 @@ def record_review(project_dir, stage, version, decision, *, scene_id=None, feedb
                     return workflow._view(root, project, reviews)
                 if request["decision"] == "request_changes" and decision == "approve":
                     pass
+                elif stage == "scene_design" and request["decision"] == "approve" and decision == "request_changes":
+                    # The design step is still open: the user may revise a reviewed scene.
+                    pass
                 else:
                     raise WorkflowError("REVIEW_CONFLICT", "This version already has a different decision; submit a new version")
             else:
@@ -86,7 +89,7 @@ def record_review(project_dir, stage, version, decision, *, scene_id=None, feedb
             raise WorkflowError("WRONG_STAGE", f"Current stage is {project['stage']}, not {stage}")
         if workflow._latest(project, stage, scene_id) != artifact:
             raise WorkflowError("STALE_REVIEW", "Only the current pending version can receive a decision")
-        if request["status"] not in ("pending", "changes_requested"):
+        if request["status"] not in ("pending", "changes_requested") and not (stage == "scene_design" and request["status"] == "approved" and decision == "request_changes"):
             raise WorkflowError("STALE_REVIEW", "Only the current pending version can receive a decision")
         workflow._prerequisites(root, project, reviews)
         workflow._verify(root, artifact)
@@ -97,6 +100,8 @@ def record_review(project_dir, stage, version, decision, *, scene_id=None, feedb
                        decision=decision, feedback=feedback, decided_at=workflow._now())
         if read_seconds is not None:
             request["read_check"] = dict(seconds=read_seconds, sha256=artifact["sha256"])
+        if stage == "scene_design" and decision == "approve":
+            project.get("scene_pauses", {}).pop(scene_id, None)
         reconcile(project, reviews)
         final = None
         if decision == "approve" and workflow._all_approved(project, reviews, stage):

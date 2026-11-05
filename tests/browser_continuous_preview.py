@@ -44,13 +44,16 @@ try:
         page.wait_for_function("() => document.querySelector('#continuous-video').readyState >= 2")
         video.evaluate('(v)=>{v.currentTime=.3;}');page.wait_for_timeout(300)
         page.screenshot(path=str(output/'preview-desktop.png'),full_page=True)
-        for name in ('Tải video MP4','Tải phụ đề SRT'):
+        for name in ('Tải video MP4',):
             link=page.get_by_role('link',name=name,exact=True);assert page.request.get(url+link.get_attribute('href')).ok
         page.set_viewport_size(dict(width=390,height=844));page.wait_for_timeout(200)
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),page.evaluate('[document.documentElement.scrollWidth,innerWidth]')
         page.screenshot(path=str(output/'preview-mobile.png'),full_page=True)
-        page.get_by_role('button',name='Cấu hình giọng đọc',exact=True).click()
-        assert page.locator('#voice-settings-panel').get_attribute('open') is not None
+        assert page.get_by_role('button',name='Cấu hình giọng đọc',exact=True).count()==0
+        assert page.locator('#voice-settings-panel').count()==0
+        assert page.get_by_role('button',name='← Chỉnh sửa cảnh',exact=True).count()==0
+        for name in ('Tải âm thanh WAV','Tải lời đọc riêng','Tải phụ đề SRT','Tải báo cáo kiểm tra'):
+            assert page.get_by_role('link',name=name,exact=True).count()==0
         assert not errors,errors
         empty=subprocess.Popen(['/home/hoang/.conda/envs/video/bin/python','-m','tests.continuous_browser_fixture'],cwd=base,env=dict(env,EMPTY_PREVIEW='1'),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:

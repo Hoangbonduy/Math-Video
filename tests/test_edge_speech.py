@@ -116,7 +116,7 @@ class EdgeSpeechTests(unittest.TestCase):
             # Failed downloads must be removed before starting another request.
             self.assertFalse(path.exists())
             saves.append(filename)
-            if len(saves) < 3:
+            if len(saves) < 4:
                 path.write_bytes(b'incomplete mp3')
                 raise NoAudioReceived('empty')
             await self.download('Test speech.', self.config['voice'], '+0%', path)
@@ -124,34 +124,34 @@ class EdgeSpeechTests(unittest.TestCase):
             communicate.return_value.save = AsyncMock(side_effect=flaky)
             first = audio.synthesize(self.root, 'Test speech.', self.config)
             self.assertEqual(audio.synthesize(self.root, 'Test speech.', self.config), first)
-        self.assertEqual(communicate.call_count, 3)
-        self.assertEqual([c.kwargs['boundary'] for c in communicate.call_args_list], ['WordBoundary', 'SentenceBoundary', 'WordBoundary'])
-        self.assertEqual([call.args[0] for call in sleep.await_args_list], [2, 5])
+        self.assertEqual(communicate.call_count, 4)
+        self.assertEqual([c.kwargs['boundary'] for c in communicate.call_args_list], ['WordBoundary', 'SentenceBoundary', 'WordBoundary', 'SentenceBoundary'])
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [5, 15, 30])
         call = audio.summary(self.root)['calls'][0]
-        self.assertEqual(call['attempts'], 3)
+        self.assertEqual(call['attempts'], 4)
         self.assertEqual(call['boundary'], first['boundary'])
         self.assertNotIn('error', call)
 
-    def test_no_audio_failure_has_specific_diagnostic_and_three_attempt_limit(self):
+    def test_no_audio_failure_has_specific_diagnostic_and_five_attempt_limit(self):
         from edge_tts.exceptions import NoAudioReceived
         terminal = io.StringIO()
         with redirect_stderr(terminal), patch('edge_tts.Communicate') as communicate, patch('src.preview.edge_speech.asyncio.sleep', new_callable=AsyncMock) as sleep:
             communicate.return_value.save = AsyncMock(side_effect=NoAudioReceived('empty'))
             with self.assertRaisesRegex(store.WorkflowError, 'TTS_EDGE_NO_AUDIO'):
                 audio.synthesize(self.root, 'Test speech.', self.config)
-        self.assertEqual(communicate.call_count, 3)
-        self.assertEqual(communicate.return_value.save.await_count, 3)
-        self.assertEqual([call.args[0] for call in sleep.await_args_list], [2, 5])
+        self.assertEqual(communicate.call_count, 5)
+        self.assertEqual(communicate.return_value.save.await_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [5, 15, 30, 60])
         call = audio.summary(self.root)['calls'][0]
         self.assertEqual(call['error'], 'NoAudioReceived')
-        self.assertEqual(call['attempts'], 3)
+        self.assertEqual(call['attempts'], 5)
         self.assertEqual([d['boundary'] for d in call['attempt_diagnostics']], [c.kwargs['boundary'] for c in communicate.call_args_list])
         self.assertFalse(list((self.root/'generation/checkpoint_7').glob('*.download.mp3')))
         logs = [json.loads(line.removeprefix('[voice.edge] ')) for line in terminal.getvalue().splitlines()]
         errors = [row for row in logs if row['event'] == 'download_error']
-        self.assertEqual(len(errors), 3)
+        self.assertEqual(len(errors), 5)
         self.assertTrue(all(row['error'] == 'NoAudioReceived' and row['audio_bytes'] == 0 and 'elapsed_seconds' in row for row in errors))
-        self.assertEqual([row['delay_seconds'] for row in logs if row['event'] == 'retry_wait'], [2, 5])
+        self.assertEqual([row['delay_seconds'] for row in logs if row['event'] == 'retry_wait'], [5, 15, 30, 60])
         self.assertEqual(logs[-1]['event'], 'synthesize_error')
         self.assertEqual(logs[-1]['code'], 'TTS_EDGE_NO_AUDIO')
 
@@ -171,7 +171,7 @@ class EdgeSpeechTests(unittest.TestCase):
         self.assertEqual(communicate.call_count, 2)
         self.assertEqual([c.kwargs['boundary'] for c in communicate.call_args_list], ['WordBoundary', 'SentenceBoundary'])
         self.assertTrue(all(c.kwargs['voice'] == self.config['voice'] and c.kwargs['rate'] == '+0%' for c in communicate.call_args_list))
-        sleep.assert_awaited_once_with(2)
+        sleep.assert_awaited_once_with(5)
         call = audio.summary(self.root)['calls'][0]
         self.assertEqual(call['status'], 'complete')
         self.assertEqual(call['attempts'], 2)
@@ -194,5 +194,84 @@ class EdgeSpeechTests(unittest.TestCase):
         for status,code,retry in [(429,'TTS_EDGE_RATE_LIMIT',True),(403,'TTS_EDGE_CONFIGURATION',False),(503,'TTS_EDGE_SERVICE',True)]:
             result=_failure(HttpError(status));self.assertEqual((result[0],result[2]),(code,retry))
         self.assertEqual(_failure(TimeoutError())[0],'TTS_EDGE_NETWORK')
+
+    def test_preview_continues_to_last_phrase_after_transient_empty_audio(self):
+        from edge_tts.exceptions import NoAudioReceived
+        from src.preview import edge_speech, pacing
+        texts = ['First sentence.', 'Middle sentence.', 'Last sentence.']
+        requested = []
+        async def flaky(text, voice, rate, path, boundary='WordBoundary'):
+            requested.append(text)
+            if text == texts[1] and requested.count(text) <= 3:
+                raise NoAudioReceived('empty')
+            await self.download(text, voice, rate, path, boundary)
+        with patch.object(pacing, 'phrases', return_value=texts), patch.object(edge_speech, '_download', side_effect=flaky), patch.object(edge_speech.asyncio, 'sleep', new_callable=AsyncMock), patch.object(edge_speech.time, 'sleep'):
+            result = pacing.prepare(self.root, {}, ' '.join(texts), self.config, audio.synthesize)
+            before = list(requested)
+            repeated = pacing.prepare(self.root, {}, ' '.join(texts), self.config, audio.synthesize)
+        self.assertEqual([s['text'] for s in result['segments']], texts)
+        self.assertEqual(requested, before)
+        self.assertEqual(result, repeated)
+        self.assertEqual(requested.count(texts[1]), 4)
+        self.assertEqual(requested[-1], texts[-1])
+        self.assertTrue(all(c['status'] == 'complete' for c in audio.summary(self.root)['calls']))
+
+    def test_auth_rejection_does_not_retry_and_rate_limit_honors_retry_after(self):
+        import asyncio
+        from src.preview import edge_speech as edge
+        class HttpError(Exception):
+            def __init__(self, status, headers=None):
+                self.status, self.headers = status, headers
+        for error, expected_code, calls, delays in [
+            (HttpError(403), 'TTS_EDGE_CONFIGURATION', 1, []),
+            (HttpError(429, {'Retry-After': '20'}), 'TTS_EDGE_RATE_LIMIT', 5, [20, 20, 30, 60]),
+            (HttpError(429, {'Retry-After': '300'}), 'TTS_EDGE_RATE_LIMIT', 1, []),
+        ]:
+            with self.subTest(status=error.status, headers=error.headers), patch.object(edge, '_download', new_callable=AsyncMock, side_effect=error) as download, patch.object(edge.asyncio, 'sleep', new_callable=AsyncMock) as sleep:
+                with self.assertRaisesRegex(store.WorkflowError, expected_code):
+                    asyncio.run(edge._with_retries('Test speech.', self.config['voice'], '+0%', self.root/'test.mp3', dict(id='test', key='key')))
+                self.assertEqual(download.await_count, calls)
+                self.assertEqual([c.args[0] for c in sleep.await_args_list], delays)
+
+    def test_every_retry_sends_nfc_even_when_input_uses_combining_marks(self):
+        import unicodedata
+        from edge_tts.exceptions import NoAudioReceived
+        from src.preview import edge_speech as edge
+        original = 'Nhưng socola đâu thể tự sinh ra?'
+        requests = []
+        async def flaky(value, voice, rate, path, boundary='WordBoundary'):
+            requests.append(value)
+            self.assertEqual(value, original)
+            self.assertTrue(unicodedata.is_normalized('NFC', value))
+            if len(requests) < 4:
+                raise NoAudioReceived('empty')
+            await self.download(value, voice, rate, path, boundary)
+        with patch.object(edge, '_download', side_effect=flaky), patch.object(edge.asyncio, 'sleep', new_callable=AsyncMock):
+            result = audio.synthesize(self.root, unicodedata.normalize('NFD', original), self.config)
+            self.assertEqual(audio.synthesize(self.root, original, self.config), result)
+        self.assertEqual(len(requests), 4)
+        self.assertEqual(result['text'], original)
+        self.assertEqual(result['request_text_form'], 'NFC')
+        self.assertEqual(audio.summary(self.root)['calls'][-1]['request_text_form'], 'NFC')
+
+    def test_decomposed_speech_cache_is_replaced_without_changing_old_bytes(self):
+        from src.preview import edge_speech as edge
+        text = 'Cắt thêm lần nữa,'
+        with patch.object(edge, '_download', side_effect=self.download), patch.object(edge.time, 'sleep'):
+            old = audio.synthesize(self.root, text, self.config)
+            good = audio.synthesize(self.root, 'Unaffected speech.', self.config)
+        old_bytes = (self.root/old['path']).read_bytes()
+        ledger_path = self.root/'generation/checkpoint_7/ledger.json'
+        ledger = store.read_json(ledger_path)
+        ledger['calls'][0]['request_text_form'] = 'NFD'
+        store.atomic_write(ledger_path, ledger)
+        with patch.object(edge, '_download', side_effect=self.download) as download, patch.object(edge.time, 'sleep'):
+            fixed = audio.synthesize(self.root, text, self.config)
+            self.assertEqual(audio.synthesize(self.root, text, self.config), fixed)
+            self.assertEqual(audio.synthesize(self.root, 'Unaffected speech.', self.config), good)
+        self.assertEqual(download.call_count, 1)
+        self.assertNotEqual(fixed['key'], old['key'])
+        self.assertEqual(fixed['request_text_form'], 'NFC')
+        self.assertEqual((self.root/old['path']).read_bytes(), old_bytes)
 
 if __name__=='__main__':unittest.main()

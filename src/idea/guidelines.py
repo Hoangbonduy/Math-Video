@@ -7,9 +7,6 @@ from src.shared.paths import PROJECT_ROOT
 from src.shared._workflow_store import WorkflowError
 
 GUIDELINE_PATH = PROJECT_ROOT / 'guidelines' / 'guidelines.md'
-# Legacy fallback only; the supplied file is authoritative when both exist.
-SUPPLIED_GUIDELINE_PATH = PROJECT_ROOT / 'guidelines.md'
-CLOSING_SENTENCE = 'Đăng ký kênh Axiora để biết thêm chi tiết.'
 GOAL_MARKER = 'Ý tưởng kịch bản (6 dòng):'
 
 
@@ -18,11 +15,11 @@ def guideline_digest(text):
 
 
 def load_guidelines():
-    path = GUIDELINE_PATH if GUIDELINE_PATH.exists() else SUPPLIED_GUIDELINE_PATH
+    path = GUIDELINE_PATH
     try:
         text = path.read_text(encoding='utf-8-sig').strip()
     except FileNotFoundError:
-        raise WorkflowError('GUIDELINE_MISSING', f'Không tìm thấy {GUIDELINE_PATH} hoặc {SUPPLIED_GUIDELINE_PATH}') from None
+        raise WorkflowError('GUIDELINE_MISSING', f'Không tìm thấy {GUIDELINE_PATH}') from None
     except (OSError, UnicodeError) as exc:
         raise WorkflowError('GUIDELINE_UNREADABLE', f'Không đọc được guideline: {exc}') from None
     if not text:
@@ -31,31 +28,47 @@ def load_guidelines():
 
 
 def parse_idea_goal(goal_text):
-    lines = [re.sub(r'^\s*\d+[.)]\s*', '', line.strip())
-             for line in (goal_text or '').splitlines() if line.strip()]
-    line5 = lines[4] if len(lines) >= 5 else ''
+    # Preserve numbered slots: omitting line 5 must not turn line 6 into line 5.
+    slots, lines = {}, []
+    next_slot = 1
+    for raw in (goal_text or '').splitlines():
+        match = re.match(r'^\s*([1-6])[.)]\s*(.*)$', raw)
+        if match:
+            slot, text = int(match[1]), match[2].strip()
+        elif raw.strip():
+            slot, text = next_slot, raw.strip()
+        else:
+            continue
+        slots[slot] = text
+        lines.append(text)
+        next_slot = slot + 1
+    def content(slot):
+        return re.sub(r'^[^:?!]*:\s*', '', slots.get(slot, ''), count=1).strip()
+    line5, closing = content(5), content(6)
     answers = re.findall(r'\(([^)]+)\)', line5)
-    # Remove answer annotations and labels before extracting the question verbatim.
     without_answers = re.sub(r'\([^)]*\)', '', line5).strip()
-    without_label = re.sub(r'^.*?:\s*', '', without_answers, count=1)
-    questions = re.findall(r'[^.!?…]*\?', without_label)
+    # A period inside a decimal/thousands separator is not a sentence boundary.
+    parts = re.split(r'(?<=[.!?…])\s+', without_answers)
+    questions = [part for part in parts if part.endswith('?')]
     question = questions[-1].strip(' ;—–-') if questions else ''
+    question_followup = without_answers.split(questions[-1], 1)[1].strip() if questions else ''
     return dict(raw_lines=lines,
-                hook=lines[0] if lines else '',
-                origin=lines[1] if len(lines) >= 2 else '',
-                climb=lines[2] if len(lines) >= 3 else '',
-                payoff=lines[3] if len(lines) >= 4 else '',
-                twist_and_question=line5,
-                line6=lines[5] if len(lines) >= 6 else CLOSING_SENTENCE,
-                has_final_question='?' in without_answers,
-                final_question=question,
+                hook=slots.get(1, ''), origin=slots.get(2, ''),
+                climb=slots.get(3, ''), payoff=slots.get(4, ''),
+                twist_and_question=slots.get(5, ''), line6=slots.get(6, ''),
+                has_line5=bool(without_answers), has_line6=bool(closing),
+                closing_text=closing, has_final_question=bool(question),
+                final_question=question, question_followup=question_followup,
                 forbidden_spoken_answers=[re.sub(r'^(?:đáp án|answer)\s*:\s*', '', answer.strip(), flags=re.I)
                                           for answer in answers if answer.strip()])
 
 
 def extract_goal_info(brief):
     if isinstance(brief.get('structured_goal'), dict):
-        return brief['structured_goal']
+        goal = brief['structured_goal']
+        if 'has_line5' in goal and 'closing_text' in goal:
+            return goal
+        return parse_idea_goal('\n'.join(goal.get('raw_lines', [])))
     if 'goal_raw' in brief:
         return parse_idea_goal(brief['goal_raw'])
     requirements = brief.get('requirements', '')
@@ -72,7 +85,7 @@ def guidelines_for_phase(text, phase):
         return text
     sections = re.split(r'(?im)(?=^##\s+PHẦN\s+[ABC]\b)', text)
     if len(sections) == 1:
-        return text  # Saved guidelines before the phase-specific document format.
+        return text
     kept = []
     for section in sections:
         if re.match(r'(?i)^##\s+PHẦN\s+B\b', section):
