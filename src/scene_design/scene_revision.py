@@ -187,7 +187,7 @@ def approve_design(project_dir,revision_id,scene_id,sha256,*,expected_round=None
         candidate=r['designs'][scene_id]
         if candidate['sha256']!=sha256: raise WorkflowError('STALE_REVIEW','Reload the candidate')
         wf._verify(root,candidate)
-        if candidate.get("design_pipeline")==2:
+        if candidate.get("design_pipeline") in (2,3):
             from src.scene_design.scene_pipeline import verify_quality
             verify_quality(root,candidate)
         if candidate.get('approved'): return copy.deepcopy(r)
@@ -310,7 +310,7 @@ def resume_revision(project_dir,revision_id,*,retry_uncertain=None):
                     path=str((resource_dir/name).relative_to(root))
                     r['resource_versions'].append(dict(resource_id=update['resource_id'],path=path,sha256=store.digest(root/path),scenes=old['scenes']))
                 _save(root,r)
-            design_change=set(r['plan']['categories'])!={'code'} or any(r['snapshot']['scenes'][sid]['scene_design'].get('design_pipeline')==2 for sid in r['affected'])
+            design_change=set(r['plan']['categories'])!={'code'} or any(r['snapshot']['scenes'][sid]['scene_design'].get('design_pipeline') in (2,3) for sid in r['affected'])
             if design_change and not all(d.get('approved') for d in r['designs'].values()) or design_change and not r['designs']:
                 for sid in r['affected']:
                     if sid in r['designs']: continue
@@ -392,5 +392,7 @@ def _context(root,p,reviews,r,sid):
             context['effective_math']=[{k:v for k,v in spec.items() if k!='points'} for spec in override['content']['datasets']]
     previous=next((h['designs'][sid] for h in reversed(r.get('round_history',[])) if sid in (h.get('designs') or {})),None)
     context['previous_design']=store.read_json(root/(previous or baseline['scene_design'])['path'])
+    story_path=(previous or baseline['scene_design']).get('storyboard_path')
+    if story_path: context['previous_storyboard']=store.read_json(store.project_path(root,story_path))
     if baseline['scene_clip']: context['previous_code']=(root/baseline['scene_clip']['code_path']).read_text()
     return context

@@ -126,18 +126,22 @@ class CodexClient:
         if not 10<=timeout<=3600:raise WorkflowError('CODEX_CONFIG','CODEX_TIMEOUT_SECONDS phải từ 10 đến 3600.')
         from src.shared.task_control import checkpoint
         checkpoint()
-        process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                                 text=True,encoding='utf-8',errors='replace',env=clean_environment(),start_new_session=True)
-        from src.shared.task_control import watch_process
-        with watch_process(process):
-            expired=False
-            try:stdout,stderr=process.communicate(text,timeout=timeout)
-            except subprocess.TimeoutExpired:
-                expired=True
-                os.killpg(process.pid,signal.SIGTERM)
-                try:stdout,stderr=process.communicate(timeout=5)
+        # Write CLI events as they arrive so the local activity view can poll.
+        with (directory/'events.jsonl').open('w',encoding='utf-8') as event_stream:
+            process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=event_stream,stderr=subprocess.PIPE,
+                                     text=True,encoding='utf-8',errors='replace',env=clean_environment(),start_new_session=True)
+            from src.shared.task_control import watch_process
+            with watch_process(process):
+                expired=False
+                try:stdout,stderr=process.communicate(text,timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid,signal.SIGKILL);stdout,stderr=process.communicate()
+                    expired=True
+                    os.killpg(process.pid,signal.SIGTERM)
+                    try:stdout,stderr=process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid,signal.SIGKILL);stdout,stderr=process.communicate()
+        if stdout is None:
+            stdout=(directory/'events.jsonl').read_text(encoding='utf-8',errors='replace')
         (directory/'events.jsonl').write_text(redact(stdout),encoding='utf-8')
         (directory/'stderr.log').write_text(redact(stderr),encoding='utf-8')
         if expired:raise WorkflowError('CODEX_TIMEOUT','Phiên Codex quá thời gian chờ; log đã lưu, không tự chạy lại.')

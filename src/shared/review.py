@@ -31,7 +31,7 @@ def record_review(project_dir, stage, version, decision, *, scene_id=None, feedb
         guard_review(reviews, artifact)
         request = workflow._request(reviews, artifact)
         if stage == "scene_design":
-            if artifact.get("design_pipeline")==2 and decision=="approve":
+            if artifact.get("design_pipeline") in (2,3) and decision=="approve":
                 from src.scene_design.scene_pipeline import verify_quality
                 verify_quality(root,artifact)
             ref=project.get("design_previews",{}).get(scene_id+":"+version)

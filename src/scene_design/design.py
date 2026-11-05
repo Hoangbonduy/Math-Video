@@ -21,7 +21,7 @@ DESIGN_SCHEMA = _object(dict(scene_id=TEXT, narration=TEXT, purpose=TEXT, durati
     objects=array(OBJECT), timeline=array(BEAT), math=array(MATH), fallback_note=TEXT))
 ASSET_SCHEMA = _object(dict(queries=array(TEXT)))
 CODE_SCHEMA = _object(dict(source=TEXT, requires_design_change={'type':'boolean'}, reason=TEXT))
-DEFAULT_CONFIG = dict(render=dict(quality='l', resolution=[640,360], fps=12, timeout_seconds=300),
+DEFAULT_CONFIG = dict(render=dict(quality='l', resolution=[360,640], fps=30, timeout_seconds=300),
                       background='#0D1726', foreground='#F2F6FC', accent='#56DFC5', font='DejaVu Sans')
 
 
@@ -204,6 +204,12 @@ def layout_png(design, assets, config):
 
 
 def design_markdown(d):
+    if d.get('schema_version')==3:
+        return ('# '+d['purpose']+'\n\n'+d['narration']+'\n\n'
+                +f"Thời lượng: {d['duration']:.3f}s · Preview 360 × 640 · Xuất 1080 × 1920 · 30 FPS\n\n"
+                +'## Kế hoạch hình ảnh và chuyển động\n'+d['visual_strategy']+'\n\n'
+                +'\n'.join('- '+o['id']+': '+o['role'] for o in d['objects'])
+                +'\n\nMã Manim được viết trực tiếp bằng component/theme dùng chung. Xem bằng chứng render trước khi duyệt.\n')
     if d.get('schema_version')==2:
         lines=['# '+d['purpose'],'','## Lời dẫn đã duyệt',d['narration'],'','## Thiết kế có quan hệ',f"Mẫu: {d['template']} · Thời lượng: {d['duration']:.3f}s",'']
         lines.extend('- '+o['id']+': '+o['kind']+' — '+o['label'] for o in d['objects'])

@@ -68,6 +68,29 @@ class LauncherTests(unittest.TestCase):
             reopened = json.load(self.request('/api/projects/open', dict(id=a)))['url']
             self.assertEqual(urlopen(reopened, timeout=5).status, 200)
 
+    def test_restarted_session_rejects_old_token_before_create_and_refresh_recovers(self):
+        import secrets
+        old_token = self.server.token
+        self.server.token = secrets.token_urlsafe(32)
+        data = dict(topic='Restart recovery', request_id=str(uuid.uuid4()))
+        request = Request(self.server.origin + '/api/projects/create',
+            data=json.dumps(data).encode(), headers={
+                'Origin': self.server.origin, 'X-Review-Token': old_token})
+        with self.assertRaises(HTTPError) as exc:
+            urlopen(request, timeout=5)
+        error = json.load(exc.exception)
+        self.assertEqual(error['code'], 'LOCAL_SESSION_EXPIRED')
+        self.assertFalse(any(self.root.glob('video_*')))
+        response = self.request('/api/projects')
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        session = json.load(response)
+        request = Request(self.server.origin + '/api/projects/create',
+            data=json.dumps(data).encode(), headers={
+                'Origin': self.server.origin, 'X-Review-Token': session['token']})
+        created = json.load(urlopen(request, timeout=5))
+        self.assertTrue((self.root / created['id'] / 'project.json').is_file())
+        self.assertEqual(json.load(self.request('/api/projects/create', data))['id'], created['id'])
+
     def test_review_returns_to_original_launcher(self):
         with patch('src.shared.review_server.ReviewServer.recover'):
             identifier = json.load(self.request('/api/projects/create', dict(topic='Draft', request_id=str(uuid.uuid4()))))['id']

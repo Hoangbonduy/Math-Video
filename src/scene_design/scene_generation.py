@@ -23,7 +23,7 @@ RENDERER=render_scene
 BUDGET=0.50
 BASE='generation/checkpoint_5'
 DESIGN_REPAIR_LIMIT=2
-DESIGN_PIPELINE_VERSION=2
+DESIGN_PIPELINE_VERSION=3
 
 
 def _index(root):
@@ -149,7 +149,13 @@ def _restore_cached_design(directory,job,context):
 
 
 def _design(root,directory,session,context):
-    from src.scene_design.scene_pipeline import generate
+    version=session.job.get('input',{}).get('design_pipeline',DESIGN_PIPELINE_VERSION)
+    if version==1:
+        return _legacy_design(root,directory,session,context)
+    if version==3:
+        from src.scene_design.scene_code_pipeline import generate
+    else:
+        from src.scene_design.scene_pipeline import generate
     return generate(root,directory,session,context)
 
 
@@ -263,8 +269,8 @@ def _clip(root,directory,session,context):
                 raise WorkflowError('ARTIFACT_CHANGED','Manim candidate changed after design review')
         return root/rendered['path'],dict(clip_version=rendered.get('render_version',rendered['version']),code_path=rendered['code_path'],
                                          render_engine='manim',reused_design_render=True)
-    if artifact.get('design_pipeline')==2:
-        raise WorkflowError('DESIGN_CHANGE_REQUIRED','Cảnh v2 phải sửa qua storyboard/JSON và kiểm tra hình lại; không thay mã Manim ngoài quy trình thiết kế.')
+    if artifact.get('design_pipeline') in (2,3):
+        raise WorkflowError('DESIGN_CHANGE_REQUIRED','Cảnh cần sửa qua quy trình kế hoạch/mã Manim và kiểm tra hình lại trước khi duyệt.')
     from src.scene_design.manim_agent import render_candidate
     return render_candidate(root,directory,session,context)
 
@@ -390,7 +396,7 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     raise WorkflowError('STRUCTURED_CLIP_REQUIRED','AI revision requires the existing clip source bundle')
                 fingerprint=dict(stage=stage,scene_id=target,version=version,script_version=script['version'],script_sha256=script['sha256'],
                     script_bundle=script['bundle'],base_version=base['version'] if base else None,base_sha256=base['sha256'] if base else None,feedback=feedback,
-                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=2,design_prompt_version=7,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION==2 else {}))
+                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=DESIGN_PIPELINE_VERSION,design_prompt_version=8 if DESIGN_PIPELINE_VERSION==3 else 7,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION in (2,3) else {}))
                 if subscription_billing():fingerprint['ai_backend']=get_backend()
                 if trial_mode: fingerprint.update(trial_mode=True,max_repairs=repairs)
                 if attempt_id: fingerprint['attempt_id']=attempt_id
@@ -483,7 +489,7 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                 selected_retry=retry_uncertain if any(c['call_id']==retry_uncertain for c in job['calls']) else None
                 other=sum(_used(j) for j in _jobs(root) if j['job_id']!=job_id)
                 reuse=stage=='scene_clip' and bool((context.get('design_artifact') or {}).get('manim_render') or context.get('design_preview')) and not context.get('feedback') and not context.get('previous_code')
-                local_design=stage=='scene_design' and DESIGN_PIPELINE_VERSION!=2 and _restore_cached_design(directory,job,context)
+                local_design=stage=='scene_design' and DESIGN_PIPELINE_VERSION==1 and _restore_cached_design(directory,job,context)
                 local_only=reuse or local_design
                 session=Session(directory,job,None if local_only else CLIENT_FACTORY(),selected_retry,budget_usd=BUDGET,other_used=other)
                 refresh_pricing=(job.get('status')=='failed' and job['calls'] and

@@ -18,7 +18,7 @@ import traceback
 
 
 _QUALITIES = {
-    "l": ("low_quality", 854, 480, 15),
+    "l": ("low_quality", 854, 480, 30),
     "m": ("medium_quality", 1280, 720, 30),
     "h": ("high_quality", 1920, 1080, 60),
     "p": ("production_quality", 2560, 1440, 60),
@@ -61,7 +61,7 @@ def _write_json_atomic(path, value):
 def _settings(render_config):
     if not isinstance(render_config, Mapping):
         raise ValueError("render_config must be a mapping")
-    unknown = set(render_config) - {"quality", "resolution", "fps", "timeout_seconds", "target_duration"}
+    unknown = set(render_config) - {"quality", "resolution", "fps", "timeout_seconds", "target_duration", "collect_layout", "frame_height"}
     if unknown:
         raise ValueError(f"Unknown render_config keys: {list(map(str, unknown))}")
     quality = render_config.get("quality", "l")
@@ -78,10 +78,13 @@ def _settings(render_config):
     for name, value in (("fps", fps), ("timeout_seconds", timeout)):
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be a positive finite number")
+    frame_height = render_config.get("frame_height", 8.0)
+    if type(frame_height) not in (int, float) or not math.isfinite(frame_height) or frame_height <= 0:
+        raise ValueError("frame_height must be positive and finite")
     settings = {
         "quality": preset, "pixel_width": resolution[0], "pixel_height": resolution[1],
-        "frame_rate": fps, "frame_height": 8.0,
-        "frame_width": 8.0 * resolution[0] / resolution[1],
+        "frame_rate": fps, "frame_height": frame_height,
+        "frame_width": frame_height * resolution[0] / resolution[1],
         "renderer": "cairo", "format": "mp4", "write_to_movie": True,
         "save_last_frame": False, "save_pngs": False, "save_sections": False,
         "preview": False, "show_in_file_browser": False, "log_to_file": False,
@@ -94,6 +97,10 @@ def _settings(render_config):
         if type(target) not in (int, float) or not math.isfinite(target) or target <= 0:
             raise ValueError("target_duration must be a positive finite number")
         effective["target_duration"] = target
+    if "frame_height" in render_config:
+        effective["frame_height"] = frame_height
+    if render_config.get("collect_layout"):
+        effective["collect_layout"] = True
     return settings, effective
 
 
@@ -149,13 +156,15 @@ def _run_worker(request_path, project, log, timeout):
         _stop_process_group(process)
 
 
-def _render_to_temp(work, project, source, scene_name, stem, settings, timeout, log, target_duration=None):
+def _render_to_temp(work, project, source, scene_name, stem, settings, timeout, log, target_duration=None, collect_layout=False):
     rendered = work / "videos" / f"{stem}.mp4"
     report_path = work / "worker_result.json"
     settings = dict(settings, media_dir=str(work / "media"),
                     video_dir=str(rendered.parent), output_file=stem)
     request = dict(scene_file=str(source), scene_name=scene_name, settings=settings,
                    expected_video=str(rendered), report_path=str(report_path))
+    if collect_layout:
+        request["collect_layout"] = True
     if target_duration is not None:
         request["target_duration"] = target_duration
     request_path = work / "request.json"
@@ -240,6 +249,7 @@ def render_scene(project_dir, scene_id, version, scene_file, scene_name, render_
             rendered, video_info = _render_to_temp(
                 Path(work_dir), project, source, scene_name, stem, settings,
                 effective["timeout_seconds"], log, effective.get("target_duration"),
+                **(dict(collect_layout=True) if effective.get("collect_layout") else {}),
             )
             # Both files are on the project filesystem: publish atomically and
             # exclusively, so no incomplete clip is exposed or old clip replaced.

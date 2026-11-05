@@ -159,9 +159,11 @@ class LauncherHandler(BaseHTTPRequestHandler):
             self.send_json(404, dict(error='Not found'))
 
     def do_POST(self):
-        if (not self.valid_host() or self.headers.get('Origin') != self.server.origin
-                or self.headers.get('X-Review-Token') != self.server.token):
-            self.send_json(403, dict(error='Invalid local session'))
+        if not self.valid_host() or self.headers.get('Origin') != self.server.origin:
+            self.send_json(403, dict(error='Invalid local session', code='INVALID_LOCAL_ORIGIN'))
+            return
+        if self.headers.get('X-Review-Token') != self.server.token:
+            self.send_json(403, dict(error='Phiên cục bộ đã đổi. Hãy tải lại trang.', code='LOCAL_SESSION_EXPIRED'))
             return
         if self.path not in ('/api/projects/create', '/api/projects/open', '/api/projects/delete'):
             self.send_json(404, dict(error='Not found'))
@@ -222,20 +224,33 @@ button{background:#278b90;color:#fff;border:1px solid #278b90;border-radius:8px;
 
 JAVASCRIPT = '''let token;
 const message = document.getElementById('message');
+async function projectSnapshot() {
+  const response = await fetch('/api/projects', {cache:'no-store'});
+  if (!response.ok) throw new Error('Không tải được phiên project. Hãy tải lại trang.');
+  const data = await response.json();
+  if (!data.token) throw new Error('Không đọc được phiên project.');
+  token = data.token;
+  return data;
+}
 async function action(path, data) {
-  const response = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json','X-Review-Token':token}, body:JSON.stringify(data)});
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Không thể thực hiện yêu cầu.');
-  return result;
+  // A page can outlive the server that issued its token (restart/back-forward).
+  // Refresh before mutations; retry only an explicit rejection before execution.
+  const body = JSON.stringify(data);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const session = await projectSnapshot();
+    const response = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json','X-Review-Token':session.token}, body});
+    const result = await response.json();
+    if (response.status === 403 && result.code === 'LOCAL_SESSION_EXPIRED' && attempt === 0) continue;
+    if (!response.ok) throw new Error(result.error || 'Không thể thực hiện yêu cầu.');
+    return result;
+  }
 }
 async function openProject(id) {
   const result = await action('/api/projects/open', {id});
   window.location.assign(result.url);
 }
 async function load() {
-  const response = await fetch('/api/projects');
-  if (!response.ok) throw new Error('Không tải được danh sách project.');
-  const data = await response.json(); token = data.token;
+  const data = await projectSnapshot();
   const list = document.getElementById('projects'); list.replaceChildren();
   if (!data.projects.length) list.textContent = 'Chưa có project. Hãy tạo project đầu tiên ở trên.';
   for (const project of data.projects) {
@@ -272,7 +287,6 @@ document.getElementById('create').onsubmit = async event => {
   if (!pendingCreate || pendingCreate.topic !== topic) pendingCreate = {topic, request_id:crypto.randomUUID()};
   message.textContent = 'Đang tạo project…';
   try {
-    if (!token) await load();
     const result = await action('/api/projects/create', pendingCreate);
     await openProject(result.id);
     pendingCreate = null;

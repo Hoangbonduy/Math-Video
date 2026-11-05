@@ -65,3 +65,10 @@ button.danger-button:hover:not(:disabled){color:#8c2020;border-color:#cd8787;bac
 
 .codex-account select{max-width:100%;text-overflow:ellipsis}.codex-account input[type=password]{font-size:12px}
 
+
+.scene-agent-activity{margin:12px 0;border:1px solid #c7d6df;border-radius:8px;padding:10px;background:#f7fafc;color:#18384a}
+.scene-agent-activity>summary{cursor:pointer;font-weight:600}
+.scene-agent-activity pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5;background:#102033;color:#edf4fb;padding:12px;border-radius:6px}
+.scene-agent-activity .agent-source{white-space:pre;tab-size:4}
+.scene-agent-activity .agent-event{margin:6px 0}
+.scene-agent-activity h4{margin:12px 0 6px}

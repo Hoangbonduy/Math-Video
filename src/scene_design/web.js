@@ -1,6 +1,7 @@
 'use strict';
 
-const scenePhases = {draft_ready:'Bản nháp đã dựng · Chưa duyệt',planning_storyboard:'Đang lập storyboard',checking_relations:'Đang kiểm tra quan hệ và chuyển động',rendering_draft:'Đang render bản nháp',evaluating_frames:'AI đang xem khung hình và đối chiếu storyboard',repairing_meaning:'Đang sửa storyboard',repairing_relation:'Đang sửa quan hệ',repairing_layout:'Đang sửa bố cục',repairing_timing:'Đang sửa nhịp',quality_failed:'Chưa đạt sau các vòng sửa',checking_model:'Đang kiểm tra mô hình AI',planning_assets:'Đang chuẩn bị hình minh họa',designing_scene:'Đang thiết kế cảnh',repairing_design:'Đang sửa thiết kế',writing_code:'Đang viết mã Manim',repairing_code:'Đang sửa mã Manim',rendering_manim:'Đang render Manim',ready_for_review:'Render xong · Chờ duyệt'};
+const sceneActivityView = {open:false,jobId:null,data:null,error:null,pending:false,timer:null};
+const scenePhases = {planning_visuals:'Đang lập kế hoạch hình ảnh và chuyển động',reading_references:'Đang tra recipe và API phù hợp',draft_ready:'Bản nháp đã dựng · Chưa duyệt',planning_storyboard:'Đang lập storyboard',checking_relations:'Đang kiểm tra quan hệ và chuyển động',rendering_draft:'Đang render bản nháp',evaluating_frames:'AI đang xem khung hình và đối chiếu storyboard',repairing_meaning:'Đang sửa storyboard',repairing_relation:'Đang sửa quan hệ',repairing_layout:'Đang sửa bố cục',repairing_timing:'Đang sửa nhịp',quality_failed:'Chưa đạt sau các vòng sửa',checking_model:'Đang kiểm tra mô hình AI',planning_assets:'Đang chuẩn bị hình minh họa',designing_scene:'Đang thiết kế cảnh',repairing_design:'Đang sửa thiết kế',writing_code:'Đang viết mã Manim',repairing_code:'Đang sửa mã Manim',rendering_manim:'Đang render Manim',ready_for_review:'Render xong · Chờ duyệt'};
 function sceneJob(id) { return [...(state.scene_generation?.jobs || [])].reverse().find(j => j.scene_id === id && j.current !== false && (j.stage === state.stage || j.kind === 'manim_design_preview')); }
 function sceneTask(id) {
   const keys = sceneJob(id)?.kind === 'manim_design_preview' ? ['preview:'+id, 'generate:'+id] : ['generate:'+id, 'preview:'+id];
@@ -48,7 +49,9 @@ function renderSceneProgress(artifact) {
   el('strong',running ? task.state==='pausing'?'Đang tạm dừng…':task.state==='queued'?'Đang xếp hàng':scenePhase(job) : approved?'Đã duyệt':paused?'Đã tạm dừng · Chờ ghi chú duyệt':failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
   const engine = job?.kind==='saved_design_render' ? 'Thiết kế Codex đã lưu · Dựng tại máy' : (job?.kind === 'manim_design_preview' || job?.preview_engine === 'json') ? 'Preview từ thiết kế · Chạy tại máy' : 'AI: '+(job?.model || state.scene_generation?.model || 'Đang đọc cấu hình');
   el('p','Cảnh '+String(state.scene_ids.indexOf(sid)+1).padStart(2,'0')+' · '+engine+' · Render: Manim / Cairo',body);
+  if(job?.design_pipeline===3)el('p','Kịch bản + phong cách + khả năng hệ thống → kế hoạch → mã Manim → render 360 × 640 / 30 FPS → đánh giá hình · '+sceneRepairLabel(job),body);
   if(job?.design_pipeline===2)el('p','Storyboard → thiết kế → render → đánh giá hình · '+sceneRepairLabel(job),body);
+  renderSceneActivity(body,job);
   if(running){
     const actions=el('div',undefined,body,'actions');
     button(actions,task.state==='pausing'?'Đang dừng…':'Dừng',async()=>{
@@ -316,9 +319,9 @@ function renderRevisions() {
 }
 
 function renderDesignQuality(artifact,parent) {
-  if (!artifact || artifact.design_pipeline !== 2) return;
+  if (!artifact || ![2,3].includes(artifact.design_pipeline)) return;
   const panel=el('details',undefined,parent,'design-quality');
-  el('summary','Storyboard và kết quả kiểm tra cảnh',panel);
+  el('summary',artifact.design_pipeline===3?'Kế hoạch hình ảnh và kết quả kiểm tra cảnh':'Storyboard và kết quả kiểm tra cảnh',panel);
   el('p',artifact.quality_passed === false ? 'Bản nháp đã render nhưng chưa đạt kiểm tra hình ảnh. Bạn có thể gửi góp ý hoặc tự kiểm tra và duyệt thiết kế.' : 'Cảnh đã qua kiểm tra quan hệ trong chuyển động và AI đánh giá các khung hình. Bạn vẫn là người quyết định duyệt.',panel,'muted');
   const content=el('div',undefined,panel);
   panel.addEventListener('toggle',async()=>{
@@ -338,7 +341,80 @@ function renderDesignQuality(artifact,parent) {
       }
       const sheets=quality.evidence_files.filter(f=>f.path.includes('contact_sheet_') && f.path.endsWith('.jpg'));
       for(const ref of sheets){const img=el('img',undefined,content);img.src=media(ref.path);img.alt='Khung hình thực sau render theo các mốc storyboard';img.loading='lazy';}
-      const links=el('div',undefined,content,'actions');downloadLink(links,'Tải storyboard JSON',artifact.storyboard_path);downloadLink(links,'Tải báo cáo kiểm tra',artifact.quality_path);
+      const links=el('div',undefined,content,'actions');downloadLink(links,artifact.design_pipeline===3?'Tải kế hoạch hình ảnh':'Tải storyboard JSON',artifact.storyboard_path);downloadLink(links,'Tải báo cáo kiểm tra',artifact.quality_path);
     }catch(error){content.textContent=error.message;panel.dataset.loaded='';}
   });
+}
+
+
+function renderSceneActivity(parent,job) {
+  if(!job?.job_id)return;
+  if(sceneActivityView.jobId!==job.job_id){
+    sceneActivityView.jobId=job.job_id;sceneActivityView.data=null;sceneActivityView.error=null;
+  }
+  const details=el('details',undefined,parent,'scene-agent-activity');
+  el('summary','Xem agent đang làm gì · Mã và tool',details);
+  details.open=sceneActivityView.open;
+  const content=el('div',undefined,details);content.id='scene-agent-activity-content';
+  paintSceneActivity();
+  details.addEventListener('toggle',()=>{
+    sceneActivityView.open=details.open;
+    if(details.open)refreshSceneActivity();
+    else {clearTimeout(sceneActivityView.timer);sceneActivityView.timer=null;}
+  });
+  if(details.open && !sceneActivityView.timer && !sceneActivityView.pending)refreshSceneActivity();
+}
+function paintSceneActivity() {
+  const content=$('scene-agent-activity-content');
+  if(!content)return;
+  content.replaceChildren();
+  const data=sceneActivityView.data;
+  if(sceneActivityView.error)el('p',sceneActivityView.error,content,'scene-error');
+  if(!data){el('p','Mở ô này để xem hoạt động của lượt tạo cảnh.',content);return;}
+  el('strong',data.summary,content);
+  el('p','Tóm tắt bước đang làm, các lời gọi tool và mã đã nhận. Tự cập nhật mỗi 2 giây khi mở.',content,'muted');
+  if(data.calls?.length){
+    el('h4','Các bước gọi agent',content);
+    const list=el('ol',undefined,content);
+    for(const call of data.calls)el('li',call.phase+' · '+call.status,list);
+  }
+  if(data.references?.length){
+    const names=data.references.map(api=>api.name+(api.available?' ✓':' · chưa có'));
+    el('p','API đã kiểm tra: '+names.join(', '),content);
+  }
+  el('h4','Tool và sự kiện',content);
+  const events=data.events || [];
+  if(!events.length)el('p',data.streaming?'Agent đang xử lý; chưa có sự kiện công khai mới.':'Chưa có sự kiện tool được ghi cho lượt này.',content);
+  for(const event of events){
+    if(event.kind==='code')continue;
+    const row=el('details',undefined,content,'agent-event');
+    const title=event.kind==='tool'?(event.name+' · '+event.status):(event.kind==='message'?'Thông báo của agent':event.status);
+    el('summary',(event.phase?event.phase+' · ':'')+title,row);
+    if(event.detail || event.text)el('pre',event.detail || event.text,row);
+  }
+  el('h4','Mã Manim',content);
+  if(data.source){
+    if(data.source_path)el('small',data.source_path,content);
+    el('pre',data.source,content,'agent-source');
+  }else el('p','Chưa nhận được mã. Mã sẽ xuất hiện khi agent trả kết quả; không phải model nào cũng truyền mã từng ký tự.',content);
+}
+async function refreshSceneActivity() {
+  clearTimeout(sceneActivityView.timer);sceneActivityView.timer=null;
+  if(!sceneActivityView.open || sceneActivityView.pending || !sid || !['design','preview'].includes(currentPage))return;
+  const job=sceneJob(sid);
+  if(!job?.job_id)return;
+  const requestedJob=job.job_id,requestedScene=sid;
+  sceneActivityView.pending=true;
+  try{
+    const query=new URLSearchParams({scene_id:requestedScene,job_id:requestedJob});
+    const response=await fetch('/api/scene-activity?'+query,{cache:'no-store',headers:{'X-Review-Token':token}});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.error || 'Không đọc được hoạt động agent.');
+    if(sceneActivityView.jobId===requestedJob && sid===requestedScene){sceneActivityView.data=data;sceneActivityView.error=null;}
+  }catch(error){if(sceneActivityView.jobId===requestedJob)sceneActivityView.error=error.message;}
+  finally{
+    sceneActivityView.pending=false;
+    paintSceneActivity();
+    if(sceneActivityView.open && ['design','preview'].includes(currentPage))sceneActivityView.timer=setTimeout(refreshSceneActivity,2000);
+  }
 }

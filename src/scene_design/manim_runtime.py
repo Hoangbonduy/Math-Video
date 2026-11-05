@@ -36,12 +36,12 @@ def _probe(executable, modified):
         env.pop(key, None)
     try:
         result = subprocess.run([executable, '-c',
-            'import json,sys,manim,av; print(json.dumps(dict(python=sys.executable,version=manim.__version__)))'],
+            'import json,sys,shutil,manim,av; print(json.dumps(dict(python=sys.executable,version=manim.__version__,latex_available=bool(shutil.which("latex") and shutil.which("dvisvgm")))))'],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=env)
         if result.returncode:
             raise ValueError(result.stderr[-1000:])
         value = json.loads(result.stdout.strip().splitlines()[-1])
-        return dict(available=True, python=value['python'], version=value['version'], renderer='cairo')
+        return dict(available=True, python=value['python'], version=value['version'], renderer='cairo',latex_available=value.get('latex_available',False))
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise WorkflowError('DEPENDENCY_ERROR',
             'Không chạy được Manim trong môi trường video. Kiểm tra MANIM_PYTHON. ' + str(exc)) from None

@@ -9,12 +9,15 @@ from src.shared.review import record_review
 from tests.scene_v2_support import DesignRouter,VisionRouter,story
 
 
-def approved_project(root,count=1):
+def approved_project(root,count=1,narration=None,brief=None):
     wf.create_project(root,'Cát tuyến và đạo hàm')
-    narration=story()['narration'];path=root/'input.md';path.write_text(narration,encoding='utf-8')
+    narration=narration or story()['narration'];path=root/'input.md';path.write_text(narration,encoding='utf-8')
+    legacy_config=copy.deepcopy(sg.DEFAULT_CONFIG)
+    legacy_config['render']['resolution']=[640,360]
+    store.atomic_write(root/'scene_config.json',legacy_config)
     scene_ids=[f'scene_{i+1}' for i in range(count)]
     wf.submit_artifact(root,'script','v001',path,scene_ids=scene_ids)
-    payload=dict(script=dict(title='Cát tuyến và đạo hàm',scenes=[dict(scene_id=sid,narration=narration,visual_intent='h giảm, cát tuyến tiến gần tiếp tuyến') for sid in scene_ids]),brief={})
+    payload=dict(script=dict(title='Cát tuyến và đạo hàm',scenes=[dict(scene_id=sid,narration=narration,visual_intent='h giảm, cát tuyến tiến gần tiếp tuyến') for sid in scene_ids]),brief=brief or {})
     (root/'input.json').write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
     with store.locked_project(root):
         p,r=wf._load(root);p['artifacts'][0]['bundle']={'script.json':dict(path='input.json',sha256=store.digest(root/'input.json'))};wf._save(root,p,r)
@@ -25,6 +28,7 @@ def approved_project(root,count=1):
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=approved_project(Path(self.tmp.name))
+        version=patch.object(sg,'DESIGN_PIPELINE_VERSION',2);version.start();self.addCleanup(version.stop)
         self.router=DesignRouter();self.vision=VisionRouter()
         for target,value in [('src.scene_design.scene_generation.CLIENT_FACTORY',self.router),('src.scene_design.scene_vision.CLIENT_FACTORY',self.vision)]:
             patcher=patch(target,return_value=value);patcher.start();self.addCleanup(patcher.stop)
@@ -75,7 +79,7 @@ class V2AutoContinueHTTPTests(unittest.TestCase):
             vision=VisionRouter([[issue],[issue],[issue],[]])
             def context(root,project,reviews):
                 return wf._latest(project,'script',None),store.read_json(root/'input.json'),{f'scene_{i}':3 for i in (1,2,3)}
-            with patch('src.scene_design.scene_generation.CLIENT_FACTORY',return_value=router), \
+            with patch.object(sg,'DESIGN_PIPELINE_VERSION',2), patch('src.scene_design.scene_generation.CLIENT_FACTORY',return_value=router), \
                  patch('src.scene_design.scene_vision.CLIENT_FACTORY',return_value=vision), \
                  patch('src.scene_design.scene_generation._context',side_effect=context), \
                  patch('src.shared.ai_config.scene_trial_enabled',return_value=True), \

@@ -207,12 +207,12 @@ def _patch(session,context,story,design,index,issues):
     return result
 
 
-def _review(root,session,vision,story,design,manifest,checks,index):
+def _review(root,session,vision,story,design,manifest,checks,index,phase_prefix="v2"):
     schema=copy.deepcopy(contract.REVIEW_SCHEMA)
     issue=schema['properties']['issues']['items']['properties']
     issue['object_ids']['items']=dict(type='string',enum=[o['id'] for o in design['objects']]+[g['id'] for g in design['groups']])
     issue['beat_id']=dict(type='string',enum=[b['id'] for b in story['beats']])
-    response=session.call(f'v2_visual_review_{index}',scene_vision.messages(root,story,design,manifest,checks),schema=schema,client=vision,pricing=session.job['vision_pricing'])
+    response=session.call(f'{phase_prefix}_visual_review_{index}',scene_vision.messages(root,story,design,manifest,checks),schema=schema,client=vision,pricing=session.job['vision_pricing'])
     review=parse_object(scene_vision.text(response,session.job['vision_pricing']['model']))
     contract.structure(review,contract.REVIEW_SCHEMA,'visual_review')
     expected=[(b['id'],criterion) for b in story['beats'] for criterion in b['criteria']]

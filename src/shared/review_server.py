@@ -172,6 +172,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control','no-store')
             self.end_headers()
             return
+        if url.path=='/api/scene-activity':
+            if self.headers.get('X-Review-Token')!=self.server.token:
+                self.send_json(403,dict(error='Invalid local review session')); return
+            from src.scene_design.scene_activity import snapshot
+            query=parse_qs(url.query)
+            try:
+                result=snapshot(self.server.root,query.get('scene_id',[''])[0],query.get('job_id',[''])[0])
+                self.send_json(200,result)
+            except (WorkflowError,OSError,ValueError,KeyError) as exc:
+                self.send_json(404,dict(error=str(exc)))
+            return
         if url.path=='/api/codex-auth':
             if self.headers.get('X-Review-Token')!=self.server.token:
                 self.send_json(403,dict(error='Invalid local review session')); return
@@ -277,7 +288,7 @@ class Handler(BaseHTTPRequestHandler):
             for name in ('path','review_path','preview_path','audio_path','narration_path','subtitle_path','code_path','log_path','metadata_path','quality_path','storyboard_path'):
                 if a.get(name):
                     p=Path(a[name]); allowed.add(p.resolve() if p.is_absolute() else (self.server.root/p).resolve())
-            allowed.update((self.server.root/c['path']).resolve() for name,c in a.get('bundle',{}).items() if name=='script.json' or a.get('design_pipeline')==2 and name.endswith(('quality.json','storyboard.json','evidence.json','visual_review.json','render_checks.json','motion_checks.json','result.json')) or Path(c['path']).suffix not in ('.json',))
+            allowed.update((self.server.root/c['path']).resolve() for name,c in a.get('bundle',{}).items() if name=='script.json' or a.get('design_pipeline') in (2,3) and name.endswith(('quality.json','storyboard.json','evidence.json','visual_review.json','render_checks.json','motion_checks.json','result.json')) or Path(c['path']).suffix not in ('.json',))
             if a.get('manifest_path'): allowed.add((self.server.root/a['manifest_path']).resolve())
         if target.is_symlink() or target.resolve() not in allowed or not target.is_file(): raise WorkflowError('MEDIA_DENIED','Not registered review media')
         return target

@@ -19,7 +19,8 @@ TITLE_SIZE, SECTION_SIZE, BODY_SIZE, VALUE_SIZE = 32, 22, 20, 26
 __all__ = [
     "BACKGROUND", "FOREGROUND", "ACCENT", "CURVE", "MUTED", "PANEL", "BORDER",
     "ROAD", "WARNING", "HIGHLIGHT_COLOR", "FONT", "TITLE_SIZE", "SECTION_SIZE", "BODY_SIZE", "VALUE_SIZE",
-    "vn_text", "place_left", "make_panel", "make_metric_card", "make_car",
+    "fit_to_safe_area", "formula_lines", "track", "FRAME_WIDTH", "FRAME_HEIGHT",
+    "SAFE_WIDTH", "SAFE_HEIGHT", "MIN_FONT_SIZE", "vn_text", "place_left", "make_panel", "make_metric_card", "make_car",
     "make_road", "make_radar_officer", "make_axes_with_grid", "finish_scene",
 ]
 
@@ -122,3 +123,41 @@ def finish_scene(scene, target_duration):
     remaining = float(target_duration) - float(scene.time)
     if remaining > 1e-3:
         scene.wait(remaining)
+
+
+# Scene coordinates remain identical at 360x640 and 1080x1920.
+from src.scene_design.scene_theme import (
+    FRAME_WIDTH, FRAME_HEIGHT, SAFE_WIDTH, SAFE_HEIGHT, MIN_FONT_SIZE,
+)
+
+
+def fit_to_safe_area(mobject, max_width=SAFE_WIDTH, max_height=SAFE_HEIGHT,
+                     min_scale=0.65):
+    """Shrink only within the readability limit; a crowded scene needs replanning."""
+    factor = min(1.0, max_width/max(mobject.width, 1e-8),
+                 max_height/max(mobject.height, 1e-8))
+    if factor < min_scale:
+        raise ValueError('LAYOUT_REPLAN_REQUIRED: content cannot fit legibly; wrap or split the visual plan')
+    return mobject.scale(factor)
+
+
+def formula_lines(*lines, size=28, color=FOREGROUND, buff=0.28):
+    """Use explicit semantic line breaks without requiring a LaTeX installation."""
+    group = VGroup(*(vn_text(line, size, color) for line in lines)).arrange(DOWN, buff=buff)
+    return fit_to_safe_area(group, min_scale=MIN_FONT_SIZE/size)
+
+
+def track(scene, object_id, mobject, role='shape', overlap_with=()):
+    """Name semantic render objects for actual frame geometry inspection.
+
+    Track labels separately from panels/axes. Declare only intentional overlap.
+    """
+    if not hasattr(scene, 'layout_registry'):
+        scene.layout_registry = {}
+    if object_id in scene.layout_registry:
+        raise ValueError('Duplicate tracked object: '+object_id)
+    if role not in ('text', 'formula', 'shape', 'background'):
+        raise ValueError('Unknown tracked object role')
+    scene.layout_registry[object_id] = dict(mobject=mobject, role=role,
+                                         overlap_with=list(overlap_with))
+    return mobject

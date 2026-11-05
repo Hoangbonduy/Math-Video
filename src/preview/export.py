@@ -46,13 +46,17 @@ def concat_audio(paths,output,seconds=None):
     run(args+['-filter_complex',filters+'[a]','-map','[a]','-ac','1','-c:a','pcm_s16le',str(output)])
 
 
-def scene(video,audio,captions,output,seconds):
+def scene(video,audio,captions,output,seconds,*,preserve_frame=False,playback_scale=1.0):
     # Quote the filter filename (the process is invoked without a shell).
     escaped=str(captions.with_suffix('.ass')).replace('\\','\\\\').replace(':','\\:').replace("'", "'\\''")
     info=probe(video)['streams']
     stream=next(s for s in info if s['codec_type']=='video')
     width,height=(1080,1920) if stream['width']<stream['height'] else (1920,1080)
     vf=f"scale={width}:{height-160}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:0:color=0x0D1726,setsar=1,fps=30,ass=filename='"+escaped+"'"
+    if preserve_frame:
+        # V3 reserves captions in the logical frame itself. Keep that exact
+        # composition instead of squeezing it into the legacy subtitle band.
+        vf=(f"setpts={playback_scale:.12g}*PTS,scale={width}:{height},setsar=1,fps=30,ass=filename='"+escaped+"'")
     temp=output.with_suffix('.partial.mp4')
     try:
         run([binary('ffmpeg'),'-y','-v','error','-i',str(video),'-i',str(audio),'-vf',vf,'-map','0:v:0','-map','1:a:0','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','160k','-ar','48000','-af','apad','-t',str(seconds),'-movflags','+faststart',str(temp)])

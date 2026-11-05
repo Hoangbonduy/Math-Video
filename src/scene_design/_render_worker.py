@@ -102,6 +102,11 @@ def render(request):
         with tempconfig(request["settings"]):
             scene=scene_class()
             scene.camera.display_image_mobject=compatible_camera().display_image_mobject.__get__(scene.camera)
+            telemetry = None
+            if request.get('collect_layout'):
+                from src.scene_design.scene_telemetry import LayoutTelemetry
+                telemetry = LayoutTelemetry(scene, float(request['settings']['frame_rate']))
+                telemetry.install()
             original_wait = scene.wait
 
             def safe_wait(duration=1.0, *args, **kwargs):
@@ -133,6 +138,8 @@ def render(request):
     except (Exception, SystemExit) as exc:
         raise WorkerFailure("RENDER_FAILED", f"{type(exc).__name__}: {exc}") from exc
     result=validate_video(Path(request["expected_video"]), request["settings"])
+    if telemetry is not None:
+        result['layout_telemetry'] = telemetry.report()
     audit=getattr(scene,'design_audit',None)
     if audit is not None:
         encoded=json.dumps(audit,allow_nan=False)
