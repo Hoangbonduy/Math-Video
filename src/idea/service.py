@@ -125,7 +125,8 @@ def _write_text(path, text):
 
 
 def edit_script(project_dir, version=None, scenes=None, *, scene_id=None, narration=None, visual_intent=None, expected_sha256=None):
-    from src.idea.content import markdown
+    from src.idea.content import markdown, check_schema, VISUAL_SCRIPT_SCHEMA
+    from src.idea.visuals import validate_visuals
 
     if scenes is None:
         scenes = []
@@ -183,6 +184,10 @@ def edit_script(project_dir, version=None, scenes=None, *, scene_id=None, narrat
                 if not isinstance(vis, str) or not vis.strip():
                     raise WorkflowError('INVALID_INPUT', f'Mô tả hình ảnh của cảnh {sid} không được để trống.')
                 target['visual_intent'] = vis.strip()
+
+        if 'global_visuals' in script_data:
+            check_schema(script_data, VISUAL_SCRIPT_SCHEMA)
+            validate_visuals(script_data)
 
         brief = project.get('brief') or payload.get('brief', {})
         rate = brief.get('read_units_per_second') or payload.get('duration_estimate', {}).get('read_units_per_second') or 3.5

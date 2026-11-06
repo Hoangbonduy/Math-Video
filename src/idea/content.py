@@ -21,6 +21,9 @@ _SCENE = _object(dict(scene_id=_TEXT, narration=_TEXT, visual_intent=_TEXT,
 SCRIPT_SCHEMA = _object(dict(title=_TEXT, main_idea=_TEXT,
                             claims=dict(type="array", minItems=1, items=_CLAIM),
                             scenes=dict(type="array", minItems=1, items=_SCENE)))
+# Keep the old schema for narration validation and saved scripts.
+GLOBAL_VISUALS_SCHEMA = _object({key: _TEXT for key in ('objects', 'layout', 'math', 'continuity')})
+VISUAL_SCRIPT_SCHEMA = _object(dict(SCRIPT_SCHEMA['properties'], global_visuals=GLOBAL_VISUALS_SCHEMA))
 REVISION_SCHEMA = _object(dict(needs_research=dict(type="boolean"), reason=_TEXT, search_query=_TEXT))
 
 
@@ -95,7 +98,11 @@ def narration_budget(brief):
 def validate_script(script, sources, brief):
     from src.shared.workflow import _identifier
 
-    check_schema(script, SCRIPT_SCHEMA)
+    schema = VISUAL_SCRIPT_SCHEMA if 'global_visuals' in script else SCRIPT_SCHEMA
+    check_schema(script, schema)
+    if 'global_visuals' in script:
+        from src.idea.visuals import validate_visuals
+        validate_visuals(script)
 
     def fail(message):
         raise WorkflowError("INVALID_SCRIPT", message)
@@ -103,7 +110,7 @@ def validate_script(script, sources, brief):
     def text(value):
         return isinstance(value, str) and bool(value.strip())
 
-    if set(script) != set(SCRIPT_SCHEMA["properties"]) or not text(script["title"]) or not text(script["main_idea"]):
+    if set(script) != set(schema["properties"]) or not text(script["title"]) or not text(script["main_idea"]):
         fail("Script must have a title, one main idea, claims and scenes")
     if not isinstance(script["claims"], list) or not script["claims"] or not isinstance(script["scenes"], list) or not script["scenes"]:
         fail("Script needs supported claims and at least one scene")
@@ -223,9 +230,12 @@ def markdown(script, sources, duration):
         lines[4] = (f"Lời đọc ƯỚC TÍNH: {duration['estimated_seconds']:.1f} giây; "
                     f"nhịp nghỉ xem hình: ít nhất {duration['visual_pause_seconds']:.1f} giây; "
                     f"video dự kiến {duration['estimated_video_seconds']:.1f} giây. Chưa phải số đo đọc thử.")
+    from src.idea.visuals import global_markdown, scene_markdown
+    heading = lines.index('## Lời đọc')
+    lines[heading:heading] = global_markdown(script)
     for scene in script["scenes"]:
         lines += [f"### {scene['scene_id']}", "", scene["narration"], "",
-                  f"Minh họa: {scene['visual_intent']}", f"Phát biểu nguồn: {', '.join(scene['claim_refs'])}", ""]
+                  f"Hình ảnh:\n\n{scene_markdown(scene['visual_intent'])}", "", f"Phát biểu nguồn: {', '.join(scene['claim_refs'])}", ""]
     lines += ["## Nguồn đã truy xuất", ""]
     for source in sources:
         lines.append(f"- {source['source_id']}: {source['title']} — {source['final_url']}")

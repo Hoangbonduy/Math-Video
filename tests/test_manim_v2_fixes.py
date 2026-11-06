@@ -12,7 +12,7 @@ from src.scene_design import scene_render_v2 as renderer, scene_pipeline as pipe
 from src.scene_design import scene_generation as sg
 from src.scene_design.design import DEFAULT_CONFIG
 from src.shared import _workflow_store as store
-from tests.scene_v2_support import obj, binding, design, vehicle, story
+from tests.scene_v2_support import legacy_config, obj, binding, design, vehicle, story
 from tests import test_scene_v2 as fixtures
 
 
@@ -171,7 +171,7 @@ class RealFidelityTests(unittest.TestCase):
         d['timeline']=[dict(object_id='label',action='highlight',start=0,duration=2,dx=0,dy=0,value=0,easing='linear')]
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);work=root/'draft';work.mkdir()
-            config=copy.deepcopy(DEFAULT_CONFIG);config['render']['resolution']=[640,360]
+            config=legacy_config();config['render']['resolution']=[640,360]
             with patch.object(renderer,'run',wraps=renderer.run) as processes:
                 ref,checks,manifest=renderer.render(root,work,{},d,dict(assets=[]),config,story(seconds=2))
             self.assertTrue(checks['passed'],checks);self.assertEqual(processes.call_count,1)

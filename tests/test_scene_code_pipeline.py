@@ -104,6 +104,9 @@ def test_real_direct_pipeline_and_native_final(tmp_path):
     evidence=store.read_json(work/'evidence.json')
     assert 3<=len(evidence['frames'])<=5
     assert len(vision.requests)==1
+    review_payload=json.loads(vision.requests[0]['messages'][1]['content'][0]['text'])
+    assert review_payload['render_checks']['duration_tolerance_seconds']==pytest.approx(2/30)
+    assert 'sub-frame' in vision.requests[0]['messages'][0]['content']
     artifact=dict(extra,path=str(path.relative_to(tmp_path)),sha256=store.digest(path))
     output=pipeline.render_final(tmp_path,artifact,context['config'])
     assert output['status']=='success',output
@@ -208,6 +211,9 @@ def test_runtime_failure_repairs_code_without_new_plan(tmp_path):
     (path,extra),session,context,vision=run_pipeline(tmp_path,CodeRouter([bad,SOURCE]))
     phases=[c['phase'] for c in session.job['calls']]
     assert extra['quality_passed']
+    code_requests=[r for r in session.client.requests if 'source' in r['response_format']['json_schema']['schema']['properties']]
+    feedback=json.loads(code_requests[-1]['messages'][1]['content'])
+    assert 'fixture runtime failure' in feedback['repair_history'][0]['issues'][0]['problem']
     assert 'v3_plan_1' not in phases and 'v3_code_1' in phases
     assert 'fixture runtime failure' in store.read_json(path.parent/'round_00'/'result.json')['issues'][0]['problem']
 
@@ -253,3 +259,91 @@ def test_validated_preview_accepts_average_frame_rate_rounding(tmp_path):
     assert extra['quality_passed']
     assert extra['manim_render']['video']['fps']==30.00412688805128
     assert len(vision.requests)==1
+
+
+def test_helper_references_resolve_installed_sdk_and_validate_keywords():
+    from src.scene_design import scene_references
+    from src.scene_design.manim_kit import vn_text,MIN_FONT_SIZE
+    refs=scene_references.lookup(['vn_text','track','manim_kit.vn_text','Text'],['group_motion'])
+    assert not refs['missing']
+    assert refs['installed_apis']['vn_text']['module'].endswith('manim_kit')
+    assert 'size' in refs['component_apis']['vn_text']['keywords']
+    assert 'font_size' in refs['component_apis']['vn_text']['keywords']
+    assert vn_text('Mặc định').font_size>=MIN_FONT_SIZE
+    assert vn_text('Alias',font_size=32).font_size==pytest.approx(vn_text('Alias',size=32).font_size)
+    with pytest.raises(ValueError,match='disagree'):vn_text('Conflict',size=22,font_size=32)
+    source=SOURCE.replace("vn_text('Chuyển động', 28)","vn_text('Chuyển động', font_szie=28)")
+    with pytest.raises(store.WorkflowError,match='Installed helper signature'):
+        pipeline.validate_helper_calls(source,refs)
+    assert pipeline.validate_helper_calls(SOURCE,refs)==SOURCE
+
+
+# API spellings from the real failed chocolate-scene plan (10 APIs, not >16).
+PRODUCTION_APIS = ['manim.VGroup','manim.Polygon','manim.Rectangle','manim.Line',
+    'manim.Create','manim.Transform','manim.Indicate','src.scene_design.manim_kit.vn_text',
+    'src.scene_design.manim_kit.track','src.scene_design.manim_kit.finish_scene']
+
+
+class QualifiedPlanRouter(CodeRouter):
+    def complete(self,payload):
+        response=super().complete(payload)
+        value=json.loads(response['choices'][0]['message']['content'])
+        if 'beats' in value:
+            value['required_apis']=PRODUCTION_APIS
+            response['choices'][0]['message']['content']=json.dumps(value,ensure_ascii=False)
+        return response
+
+
+def test_real_render_with_production_fully_qualified_plan(tmp_path):
+    (path,extra),session,context,vision=run_pipeline(tmp_path,QualifiedPlanRouter(),repairs=0)
+    assert extra['quality_passed']
+    assert [c['phase'] for c in session.job['calls']][:2]==['v3_plan_0','v3_code_0']
+    assert len(vision.requests)==1
+
+
+def test_invalid_reference_replans_instead_of_repeating_lookup(tmp_path):
+    class InvalidFirstPlan(QualifiedPlanRouter):
+        def complete(self,payload):
+            response=super().complete(payload)
+            value=json.loads(response['choices'][0]['message']['content'])
+            if 'beats' in value and sum('beats' in r['response_format']['json_schema']['schema']['properties'] for r in self.requests)==1:
+                value['required_apis']=['os.system']
+                response['choices'][0]['message']['content']=json.dumps(value)
+            return response
+    (path,extra),session,context,vision=run_pipeline(tmp_path,InvalidFirstPlan(),repairs=1)
+    assert extra['quality_passed']
+    phases=[c['phase'] for c in session.job['calls']]
+    assert 'v3_plan_1' in phases and 'v3_code_0' not in phases and 'v3_code_1' in phases
+    issue=store.read_json(path.parent/'round_00/result.json')['issues'][0]
+    assert issue['category']=='unsupported' and 'required_apis' in issue['fix']
+
+
+def test_brief_animations_have_actual_motion_evidence_and_selected_frames(tmp_path):
+    source=SOURCE.replace("        self.play(point.animate.shift(2*RIGHT), run_time=2, rate_func=linear)",
+        "        cut=track(self,'cut',Line([-2,-2,0],[2,-2,0],color=YELLOW),'shape')\n"
+        "        self.play(Create(cut),run_time=.5)\n"
+        "        self.play(point.animate.shift(RIGHT),run_time=.5)\n"
+        "        self.play(Transform(title,vn_text('1',28).move_to(title)),run_time=.2)\n"
+        "        self.play(title.animate.shift(.1*RIGHT),run_time=.1)\n"
+        "        self.play(title.animate.shift(.1*LEFT),run_time=.1)")
+    (path,extra),session,context,vision=run_pipeline(tmp_path,CodeRouter([source]),repairs=0)
+    telemetry=store.read_json(path.parent/'round_00/layout_telemetry.json')
+    checks=store.read_json(path.parent/'round_00/motion_checks.json')
+    frames={f['frame'] for f in store.read_json(path.parent/'round_00/evidence.json')['frames']}
+    assert checks['motion_events']==telemetry['events']
+    create=next(e for e in telemetry['events'] if any(a['type']=='Create' for a in e['animations']))
+    change=next(e for e in telemetry['events'] if any(a.get('target_text')=='1' for a in e['animations']))
+    assert create['middle_frame'] in frames and change['middle_frame'] in frames
+    point_motion=next(e['motion']['point'] for e in telemetry['events'] if e.get('motion',{}).get('point',{}).get('changed_frames',0)>0)
+    assert point_motion['last_box'][0]>point_motion['first_box'][0]
+    wait=next(e for e in telemetry['events'] if e.get('is_wait') and e['end_frame']-e['start_frame']>10)
+    assert wait['middle_frame'] not in frames
+
+
+def test_transform_to_genuinely_small_text_still_fails_layout(tmp_path):
+    source=SOURCE.replace("self.play(point.animate.shift(2*RIGHT), run_time=2, rate_func=linear)",
+        "self.play(Transform(title,vn_text('1',12).move_to(title)),run_time=.5)")
+    with pytest.raises(store.WorkflowError,match='Rendered font is below'):
+        run_pipeline(tmp_path,CodeRouter([source]),repairs=0)
+    issues=store.read_json(tmp_path/'generation/direct/round_00/motion_checks.json')['issues']
+    assert any(i['object_ids']==['title'] and i['time']>0 for i in issues)

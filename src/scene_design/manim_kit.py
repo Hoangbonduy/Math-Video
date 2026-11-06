@@ -14,7 +14,9 @@ ROAD = "#1C2E4A"
 WARNING = "#F59E0B"
 HIGHLIGHT_COLOR = "#FACC15"
 FONT = "DejaVu Sans"
-TITLE_SIZE, SECTION_SIZE, BODY_SIZE, VALUE_SIZE = 32, 22, 20, 26
+from src.scene_design.scene_theme import MIN_FONT_SIZE
+
+TITLE_SIZE, SECTION_SIZE, BODY_SIZE, VALUE_SIZE = 32, 22, 28, 26
 
 __all__ = [
     "BACKGROUND", "FOREGROUND", "ACCENT", "CURVE", "MUTED", "PANEL", "BORDER",
@@ -25,8 +27,14 @@ __all__ = [
 ]
 
 
-def vn_text(content, size=BODY_SIZE, color=FOREGROUND, max_width=None, max_height=None):
-    """Create Vietnamese text without LaTeX, shrinking only when needed."""
+def vn_text(content, size=None, color=FOREGROUND, max_width=None, max_height=None, *, font_size=None):
+    """Vietnamese Text; size is canonical, font_size is a compatibility alias.
+
+    Default text meets MIN_FONT_SIZE. Explicit scaling still needs layout checks.
+    """
+    if size is not None and font_size is not None and size != font_size:
+        raise ValueError('vn_text: size and font_size disagree; use size=28')
+    size = size if size is not None else font_size if font_size is not None else BODY_SIZE
     mob = Text(str(content), font=FONT, font_size=size, color=color)
     if max_width and mob.width > max_width:
         mob.scale(max_width / mob.width)
@@ -49,7 +57,7 @@ def make_panel(width, height, center, title=None, subtitle=None):
     if title:
         parts.append(place_left(vn_text(title, SECTION_SIZE, max_width=width-0.6), left, top))
     if subtitle:
-        parts.append(place_left(vn_text(subtitle, 18, MUTED, max_width=width-0.6), left, top-0.52))
+        parts.append(place_left(vn_text(subtitle, MIN_FONT_SIZE, MUTED, max_width=width-0.6), left, top-0.52))
     return VGroup(*parts)
 
 
@@ -58,7 +66,7 @@ def make_metric_card(x, y, title, value_text, value_color=FOREGROUND, width=4.12
         width=width, height=height, corner_radius=0.16,
         fill_color=PANEL, fill_opacity=1, stroke_color=BORDER, stroke_width=1.2,
     ).move_to([x, y, 0])
-    label = vn_text(title, 17, MUTED, max_width=width-0.4).move_to([x, y+0.26, 0])
+    label = vn_text(title, MIN_FONT_SIZE, MUTED, max_width=width-0.4).move_to([x, y+0.26, 0])
     value = vn_text(value_text, VALUE_SIZE, value_color, max_width=width-0.4).move_to([x, y-0.18, 0])
     return VGroup(bg, label, value)
 
@@ -112,9 +120,9 @@ def make_axes_with_grid(x_range, y_range, x_length=4.74, y_length=2.35,
     grid = VGroup()
     for y in y_ticks:
         grid.add(Line(axes.c2p(x_range[0],y),axes.c2p(x_range[1],y),color=BORDER,stroke_width=1))
-        grid.add(vn_text(str(y),16,MUTED).next_to(axes.c2p(x_range[0],y),LEFT,buff=0.14))
+        grid.add(vn_text(str(y),MIN_FONT_SIZE,MUTED).next_to(axes.c2p(x_range[0],y),LEFT,buff=0.14))
     for x in x_ticks:
-        grid.add(vn_text(str(x),16,MUTED).next_to(axes.c2p(x,y_range[0]),DOWN,buff=0.14))
+        grid.add(vn_text(str(x),MIN_FONT_SIZE,MUTED).next_to(axes.c2p(x,y_range[0]),DOWN,buff=0.14))
     return axes, grid
 
 

@@ -72,3 +72,5 @@ button.danger-button:hover:not(:disabled){color:#8c2020;border-color:#cd8787;bac
 .scene-agent-activity .agent-source{white-space:pre;tab-size:4}
 .scene-agent-activity .agent-event{margin:6px 0}
 .scene-agent-activity h4{margin:12px 0 6px}
+
+.scene-agent-activity li>small{display:block;margin-top:4px}

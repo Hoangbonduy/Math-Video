@@ -5,6 +5,14 @@ from tests.ai_support import FakeRouter
 from src.shared.ai_config import get_model
 
 
+def legacy_config():
+    """Pin legacy fixture coordinates and frame indices independently of V3 defaults."""
+    from src.scene_design.design import DEFAULT_CONFIG
+    config=copy.deepcopy(DEFAULT_CONFIG)
+    config['render'].update(resolution=[640,360],fps=12)
+    return config
+
+
 def obj(oid,kind,x,y,w,h,label=''):
     return dict(id=oid,kind=kind,label=label,x=x,y=y,width=w,height=h,color='#56DFC5',asset_id='',points=[],overlap_with=[])
 

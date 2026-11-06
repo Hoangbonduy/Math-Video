@@ -4,6 +4,7 @@ V3 keeps JSON as a review manifest, never as a fixed geometry language.
 Old v2 rounds remain readable and resumable through scene_pipeline.
 """
 import copy
+import ast
 import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -48,10 +49,12 @@ def validate_plan(plan, context):
         beat['required_capabilities']=[]
     contract.validate_story(core,context['scene'],context['target_seconds'],
                             is_opening_scene=bool(context.get('is_opening_scene')))
+    scene_references.validate_request(plan['required_apis'],plan['recipe_ids'])
     ids=[o['id'] for o in plan['objects']]
     if len(ids)!=len(set(ids)):
         raise WorkflowError('INVALID_SCENE_DESIGN','Visual object IDs must be unique')
-    return plan
+    from src.scene_design.script_visuals import validate_plan_criteria
+    return validate_plan_criteria(plan,context)
 
 
 def _plan(session, context, index, previous, issues):
@@ -60,8 +63,11 @@ def _plan(session, context, index, previous, issues):
         'Plan the visual explanation and motion before writing code. Preserve scene_id, narration and target duration exactly. '
         'Partition narration verbatim into consecutive beats covering the entire duration. Prefer 1..3 beats. '
         'State what viewers see, how it moves, what they understand and concrete acceptance criteria. '
+        'For cutting/rearrangement, specify piece boundaries, exact translations/rotations, conserved area and the expected final outline. '
+        'Explain how the remaining real pieces assemble; do not assume a small arbitrary shift reconstructs the original outline. '
         'Show a concrete anchor at t=0 and start meaningful motion before 0.8 seconds. '
-        'Choose recipe_ids and required_apis from actual Manim needs; a targeted reference lookup follows. '
+        'Choose recipe_ids and at most 16 required_apis from actual Manim needs; a targeted reference lookup follows. '
+        'Accepted names include VGroup, Axes.plot, manim.VGroup, manim_kit.vn_text and src.scene_design.manim_kit.vn_text. '
         'objects lists semantic object IDs/roles for track(), including individual text labels. '
         'Use the shared portrait frame and safe bounds. Formula/text must stay readable at both resolutions. '
         'For overflow despite minimum readable fonts, split the explanation into sequential visual states or reduce simultaneous content; '
@@ -78,6 +84,33 @@ def _plan(session, context, index, previous, issues):
     return result
 
 
+def validate_helper_calls(source,references):
+    """Catch unsupported helper keywords before spending a render attempt."""
+    apis=references.get('component_apis',{})
+    tree=ast.parse(source)
+    aliases={}
+    modules=set()
+    for node in ast.walk(tree):
+        if isinstance(node,ast.ImportFrom) and node.module in ('manim_kit','src.scene_design.manim_kit'):
+            for name in node.names:
+                if name.name=='*':aliases.update({key:key for key in apis})
+                else:aliases[name.asname or name.name]=name.name
+        if isinstance(node,ast.Import):
+            modules.update(n.asname or n.name for n in node.names if n.name=='manim_kit')
+    for node in ast.walk(tree):
+        if not isinstance(node,ast.Call):continue
+        name=aliases.get(node.func.id) if isinstance(node.func,ast.Name) else None
+        if isinstance(node.func,ast.Attribute) and isinstance(node.func.value,ast.Name) and node.func.value.id in modules:
+            name=node.func.attr
+        info=apis.get(name,{})
+        if not info.get('available') or info.get('accepts_kwargs',True):continue
+        unknown={k.arg for k in node.keywords if k.arg is not None}-set(info.get('keywords',[]))
+        if unknown:
+            raise WorkflowError('INVALID_SCENE_CODE',f'Line {node.lineno}: {name} has unsupported keyword(s) {sorted(unknown)}. '
+                f'Installed helper signature: {name}{info["signature"]}. Preserve readable size >= 22 after scaling.')
+    return source
+
+
 def _code(session, context, plan, references, index, previous, issues):
     result=_ask(session,f'v3_code_{index}',
         'Write runnable direct Python Manim code from the visual plan, style and installed API references. '
@@ -85,12 +118,15 @@ def _code(session, context, plan, references, index, previous, issues):
         'Use shared components and theme. Use track(self, object_id, mobject, role, overlap_with=()) '
         'for EVERY planned semantic object, especially each text/formula separately from backgrounds and axes. '
         'Only intentional semantic overlap may be declared. Labels must remain clear for the entire motion path. '
-        'Use vn_text, formula_lines, fit_to_safe_area and MIN_FONT_SIZE; wrap formulas at semantic boundaries. '
+        'Use vn_text(content, size=28), formula_lines, fit_to_safe_area and MIN_FONT_SIZE; wrap formulas at semantic boundaries. '
+        'Helper signatures in component_apis are authoritative. Effective font size after every scale must stay >= MIN_FONT_SIZE. '
+        'repair_history contains earlier failures: preserve fixes already made and do not reintroduce them while fixing the latest issue. '
         'Text and geometry use the same 9 x 16 frame at 360x640 preview and 1080x1920 final, both 30 FPS. '
         'Never multiply coordinates, font sizes, stroke widths or timing by pixel resolution. Never change global config or camera dimensions. '
         'Set self.camera.background_color from the supplied style. Embed style/duration as Python literals. '
         'Keep all visible content within frame_contract.safe_bounds, reserving the bottom region for captions. '
         'Use actual Manim animations, geometry, Axes, ValueTracker and updaters; dependent mathematical values use a single shared source. '
+        'For cutting/rearranging objects, derive pieces from the original geometry and conserve area; never create a duplicate piece to fake extraction. '
         'Start with visible anchor objects at t=0, meaningful motion by 0.8s, no blank opening. '
         'Budget each self.play explicitly; call finish_scene(self, target_seconds). Never wait with nonpositive duration. '
         'Preserve narration exactly; no sound or narration walls. Use DejaVu Sans Text for Vietnamese; '
@@ -107,7 +143,7 @@ def _code(session, context, plan, references, index, previous, issues):
     if result['requires_design_change']:
         code='MEANING_REPLAN_REQUIRED' if result['reason'].startswith('MEANING_REPLAN_REQUIRED') else 'LAYOUT_REPLAN_REQUIRED'
         raise WorkflowError(code,result['reason'] or 'Visual plan needs splitting')
-    return validate_code(result['source'],context['assets']['assets'])
+    return validate_helper_calls(validate_code(result['source'],context['assets']['assets']),references)
 
 
 def _manifest(plan):
@@ -182,9 +218,11 @@ def evidence(root, work, ref, design, plan):
     store.atomic_write(work/'layout_telemetry.json',telemetry)
     checks=dict(passed=not issues,issues=issues,checked_frames=telemetry['checked_frames'],
                 source='actual Manim Cairo geometry',early_motion=telemetry['early_motion'],
-                visual_candidates=telemetry.get('candidates',[]))
+                visual_candidates=telemetry.get('candidates',[]),
+                motion_events=telemetry.get('events',[]))
     store.atomic_write(work/'motion_checks.json',checks)
-    render_checks=dict(passed=True,issues=[],video=ref['video'],layout_checks=checks)
+    render_checks=dict(passed=True,issues=[],video=ref['video'],layout_checks=checks,
+        target_duration_seconds=design['duration'],duration_tolerance_seconds=2/scene_theme.FPS)
     store.atomic_write(work/'render_checks.json',render_checks)
     folder=work/'frames';folder.mkdir(exist_ok=True)
     frames=[]
@@ -239,6 +277,10 @@ def _publish(root,directory,session,work,design,plan,assets,ref,review):
 
 
 def generate(root,directory,session,context):
+    from src.scene_design.script_visuals import with_visual_handoff
+    context=with_visual_handoff(context)
+    if context.get('visual_handoff'):
+        legacy._write(directory/'visual_handoff.json',context['visual_handoff'])
     session.max_requests=24
     job=session.job
     max_repairs=job.get('input',{}).get('max_repairs',2)
@@ -291,13 +333,17 @@ def generate(root,directory,session,context):
             legacy._write(work/'storyboard.json',plan)
             _progress(session,'reading_references',index)
             ref_path=work/'references.json'
-            references=store.read_json(ref_path) if ref_path.exists() else scene_references.lookup(plan['required_apis'],plan['recipe_ids'])
+            references=store.read_json(ref_path) if ref_path.exists() else {}
+            if references.get('schema_version')!=scene_references.REFERENCE_VERSION:
+                references=scene_references.lookup(plan['required_apis'],plan['recipe_ids'])
             legacy._write(ref_path,references)
             if references['missing']:
                 raise WorkflowError('LAYOUT_REPLAN_REQUIRED','Unavailable installed APIs: '+', '.join(references['missing']))
             design=_manifest(plan);legacy._write(work/'design.json',design)
             _progress(session,'writing_code' if source is None else 'repairing_code',index)
-            source=_code(session,context,plan,references,index,source,issues)
+            history=[dict(round=path.parent.name,issues=store.read_json(path).get('issues',[]))
+                for path in sorted(directory.glob('round_*/result.json')) if path.parent.name<work.name]
+            source=_code(session,dict(context,repair_history=history),plan,references,index,source,issues)
             store.materialize(work,'scene.py',content=source.encode())
             _progress(session,'rendering_draft',index)
             ref=render_code(root,work,session,design,source,context['config'])
@@ -308,7 +354,7 @@ def generate(root,directory,session,context):
             from src.scene_design import scene_drafts
             scene_drafts.publish(root,work,session,ref)
             _progress(session,'evaluating_frames',index)
-            review=legacy._review(root,session,vision,plan,design,manifest,render_checks,index,phase_prefix='v3')
+            review=legacy._review(root,session,vision,plan,design,manifest,render_checks,index,phase_prefix='v3',visual_handoff=context.get('visual_handoff'))
             legacy._write(work/'visual_review.json',review)
             issues=review['issues']
             job['draft']['review']=dict(passed=review['passed'],summary=review['summary'],
@@ -319,14 +365,16 @@ def generate(root,directory,session,context):
             if reviewable:
                 return _publish(root,directory,session,work,design,plan,assets,ref,review)
         except WorkflowError as exc:
-            if exc.code not in ('INVALID_SCENE_DESIGN','INVALID_SCENE_CODE','RENDER_FAILED','SCENE_DURATION_MISMATCH','INVALID_MODEL_OUTPUT','INVALID_VISUAL_REVIEW','LAYOUT_REPLAN_REQUIRED','MEANING_REPLAN_REQUIRED'):
+            if exc.code not in ('INVALID_SCENE_DESIGN','INVALID_SCENE_REFERENCE','INVALID_SCENE_CODE','RENDER_FAILED','SCENE_DURATION_MISMATCH','INVALID_MODEL_OUTPUT','INVALID_VISUAL_REVIEW','LAYOUT_REPLAN_REQUIRED','MEANING_REPLAN_REQUIRED'):
                 raise
-            category='meaning' if plan is None or exc.code=='MEANING_REPLAN_REQUIRED' else 'layout' if exc.code=='LAYOUT_REPLAN_REQUIRED' else 'relation'
+            reference_failure=exc.code=='INVALID_SCENE_REFERENCE' or job.get('progress')=='reading_references'
+            planning_failure=job.get('progress')=='planning_visuals'
+            category='unsupported' if reference_failure else 'meaning' if planning_failure or plan is None or exc.code=='MEANING_REPLAN_REQUIRED' else 'layout' if exc.code=='LAYOUT_REPLAN_REQUIRED' else 'relation'
             issues=[dict(category=category,time=0,object_ids=[],problem=redact(str(exc)),
-                         fix='Repair the visual plan' if exc.code=='LAYOUT_REPLAN_REQUIRED' or plan is None else 'Repair the Manim code; preserve the visual plan and criteria')]
+                         fix='Correct required_apis or recipe_ids in the visual plan; no scene code has been rendered for this reference error.' if reference_failure else 'Repair the visual plan' if planning_failure or exc.code=='LAYOUT_REPLAN_REQUIRED' or plan is None else 'Repair the Manim code; preserve the visual plan and criteria')]
             legacy._write(result_path,dict(passed=False,issues=issues))
     job.update(progress='quality_failed',quality_issues=issues);session.save()
-    raise WorkflowError('SCENE_QUALITY_FAILED','C?nh c?n s?a sau c?c v?ng ki?m tra. '+ '; '.join(i['problem'] for i in issues)[:800])
+    raise WorkflowError('SCENE_QUALITY_FAILED','Cảnh cần sửa sau các vòng kiểm tra. '+ '; '.join(i['problem'] for i in issues)[:800])
 
 
 def render_final(root, artifact, config=None):

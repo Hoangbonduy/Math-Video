@@ -9,7 +9,7 @@ from src.shared import _workflow_store as store
 from src.shared._workflow_store import WorkflowError
 from src.shared.ai_client import SUBSCRIPTION_SOURCES, subscription_billing
 from src.shared.ai_config import get_backend, get_model, BUDGET_USD, MAX_REQUESTS, normalize_brief
-from src.idea.content import SCRIPT_SCHEMA, REVISION_SCHEMA, parse_object, validate_script, markdown, align_evidence_spacing
+from src.idea.content import VISUAL_SCRIPT_SCHEMA, REVISION_SCHEMA, parse_object, validate_script, markdown, align_evidence_spacing
 from src.shared.openrouter_client import HTTPFailure, redact, response_text
 from src.idea.research import collect_sources
 from src.idea.narration import (PROMPT_VERSION, NARRATION_SCHEMA, narration_messages,
@@ -139,14 +139,14 @@ def _produce(session, topic, brief, previous=None, feedback=None):
                                 previous=previous_script, feedback=feedback, guidelines_text=guidelines_text)
 
     def validate(value):
-        script = align_evidence_spacing(value, research['sources'])
+        script = align_evidence_spacing(value, research['sources'], schema=VISUAL_SCRIPT_SCHEMA)
         duration = validate_script(script, research['sources'], brief)
         if any(script[field] != draft[field] for field in ('title', 'main_idea', 'claims')):
             raise WorkflowError('INVALID_SCRIPT', 'Bước chia cảnh phải giữ nguyên title, main_idea và claims đã duyệt')
         validate_editorial(script, approved_narration=draft['narration'], brief=brief)
         return script, duration
 
-    script, duration = _validated_call(session, 'draft', messages, SCRIPT_SCHEMA, validate,
+    script, duration = _validated_call(session, 'draft', messages, VISUAL_SCRIPT_SCHEMA, validate,
                                      draft_repairs, repair_prefix='draft')
     research["claims"] = script["claims"]
     bundle = {

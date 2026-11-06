@@ -9,7 +9,7 @@ from unittest.mock import patch
 from src.scene_design import scene_contract as c, scene_pipeline as pipeline
 from src.scene_design.design import DEFAULT_CONFIG
 from src.shared._workflow_store import WorkflowError
-from tests.scene_v2_support import vehicle, obj, design, story, binding
+from tests.scene_v2_support import legacy_config, vehicle, obj, design, story, binding
 from tests.test_fraction_overlaps import fraction_design
 
 
@@ -117,7 +117,7 @@ class RepairTests(unittest.TestCase):
         d=fraction_design();fixed=copy.deepcopy(d)
         fixed['objects'][1]['overlap_with']=['whole','destination']
         context=dict(scene=dict(scene_id=d['scene_id'],narration=d['narration']),
-                     target_seconds=3,config=copy.deepcopy(DEFAULT_CONFIG))
+                     target_seconds=3,config=legacy_config())
         session=SimpleNamespace(job=dict(input=dict(max_repairs=2)),save=lambda:None)
         with tempfile.TemporaryDirectory() as folder,patch.object(pipeline,'_patch',return_value=d) as layout,patch.object(pipeline,'_design',return_value=fixed) as rebuild:
             result,checks,inner=pipeline._pre_render(session,context,story(),d,

@@ -16,7 +16,7 @@ from src.scene_design import manim_kit as kit
 from src.scene_design.design import DEFAULT_CONFIG, validate_code
 from src.scene_design.render import render_scene
 from src.shared import _workflow_store as store
-from tests.scene_v2_support import obj, vehicle, story, binding
+from tests.scene_v2_support import legacy_config, obj, vehicle, story, binding
 
 
 def roadside_scene():
@@ -26,6 +26,7 @@ def roadside_scene():
     d['objects'][0]['id']='car_body'
     d['groups'][0]['members'][0]='car_body'
     road=obj('road','rectangle',.5,.76,.94,.20);road['color']='#1C2E4A'
+    road['overlap_with']=['car_body','wheel1','wheel2']
     d['objects'].insert(0,road)
     d['objects'] += [
         obj('officer','rectangle',.58,.39,.04,.14),
@@ -112,7 +113,7 @@ class EvidenceAcceptanceTests(unittest.TestCase):
     def test_actual_vehicle_render_extracts_all_frames_in_one_ffmpeg_process(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);work=root/'round_00';work.mkdir()
-            style=copy.deepcopy(DEFAULT_CONFIG);style['render']['resolution']=[640,360]
+            style=legacy_config();style['render']['resolution']=[640,360]
             with patch.object(renderer,'run',wraps=renderer.run) as process:
                 ref,checks,manifest=renderer.render(root,work,{},roadside_scene(),dict(assets=[]),style,story(seconds=2))
             self.assertTrue(checks['passed'],checks)
@@ -164,7 +165,7 @@ class PipelineAssetAcceptanceTests(unittest.TestCase):
                 root=Path(folder);router=DesignRouter();vision=VisionRouter()
                 job=dict(job_id='assets',input={},calls=[],status='working',pricing=router.preflight(search=False))
                 context=dict(scene=dict(scene_id='scene_1',narration=story()['narration']),
-                             target_seconds=3,config=copy.deepcopy(DEFAULT_CONFIG),script={},brief={})
+                             target_seconds=3,config=legacy_config(),script={},brief={})
                 if shared is not None:context['shared_assets']=shared
                 with patch.dict('os.environ',dict(AI_BACKEND='openrouter',
                         OPENROUTER_MODEL='anthropic/claude-haiku-5.5',

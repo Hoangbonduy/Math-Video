@@ -34,7 +34,7 @@ def public_event(event):
         try:
             result=json.loads(text)
             if isinstance(result,dict) and isinstance(result.get('source'),str):
-                return dict(kind='code',status=status,text=redact(result['source'])[:60000])
+                return None
         except (ValueError,TypeError):pass
         # Final/user-facing messages only, never the reasoning event type.
         return dict(kind='message',status=status,text=redact(str(text))[:12000])
@@ -50,6 +50,23 @@ def _tail(path,limit=160000):
         return stream.read(limit).decode('utf-8',errors='replace')
 
 
+def render_state(root,directory,scene_id):
+    """Read actual worker results, including previews blocked by layout checks."""
+    result={}
+    for work in sorted(Path(directory).glob('round_*')):
+        path=work/'code_render.json'
+        if not path.is_file():continue
+        record=store.read_json(path)
+        status=record.get('status')
+        version=record.get('version')
+        if re.fullmatch(r'[A-Za-z0-9_-]+',str(scene_id)) and re.fullmatch(r'v[0-9]+',str(version)):
+            metadata=Path(root)/'logs'/f'{scene_id}_{version}.json'
+            if metadata.is_file():status=store.read_json(metadata).get('status',status)
+        if status=='running' and (work/'result.json').exists():status='failed'
+        result=dict(render_status=status,render_version=version)
+    return result
+
+
 def snapshot(root,scene_id,job_id):
     root=Path(root)
     index=root/'generation/checkpoint_5/ledger.json'
@@ -61,7 +78,7 @@ def snapshot(root,scene_id,job_id):
         if candidate.get('job_id')==job_id and candidate.get('input',{}).get('scene_id')==scene_id:
             job=candidate;directory=path.parent;break
     if job is None:raise WorkflowError('SCENE_JOB_NOT_FOUND','Không tìm thấy lượt tạo cảnh trong project này.')
-    calls=[];events=[];source='';source_path=None
+    calls=[];events=[]
     for call in job.get('calls',[])[-12:]:
         calls.append({k:call.get(k) for k in ('call_id','phase','status','started_at','finished_at')})
         cid=call.get('call_id','')
@@ -70,24 +87,15 @@ def snapshot(root,scene_id,job_id):
         for line in _tail(trace).splitlines():
             try:event=public_event(json.loads(line))
             except (ValueError,TypeError,AttributeError):continue
-            if event:
+            if event and event['kind']=='tool':
                 event['phase']=call.get('phase','')
-                if event['kind']=='code':source=event['text']
                 events.append(event)
-    for path in sorted(directory.glob('round_*/scene.py')):
-        source=_tail(path,60000);source_path=str(path.relative_to(root))
-    # A completed structured response can contain code before scene.py is saved.
-    for call in reversed(job.get('calls',[])):
-        if call.get('status')!='complete' or 'code' not in call.get('phase',''):continue
-        cid=call.get('call_id','')
-        if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',cid):continue
-        path=directory/'calls'/(cid+'.json')
-        if not path.is_file():continue
-        try:
-            from src.shared.openrouter_client import response_text
-            value=json.loads(response_text(store.read_json(path)))
-            if isinstance(value.get('source'),str):source=value['source'];break
-        except (ValueError,KeyError,TypeError,WorkflowError):continue
+    plan=[]
+    for path in sorted(directory.glob('round_*/storyboard.json')):
+        data=store.read_json(path)
+        plan=[dict(show=redact(str(beat.get('show','')))[:2000],
+                   motion=redact(str(beat.get('motion','')))[:2000])
+              for beat in data.get('beats',[])[:8]]
     references=[]
     for path in sorted(directory.glob('round_*/references.json')):
         data=store.read_json(path)
@@ -99,13 +107,19 @@ def snapshot(root,scene_id,job_id):
         if ref.is_file():
             data=store.read_json(ref)
             local_events.append(dict(kind='tool',phase=work.name,name='Tra API / reference',
-                status='completed',detail=', '.join(data.get('installed_apis',{}))))
+                status='failed' if data.get('missing') else 'completed',
+                detail=', '.join(name+(' ✓' if info.get('available') else ' · không tìm thấy') for name,info in data.get('installed_apis',{}).items())))
         record=work/'code_render.json'
         if record.is_file():
             data=store.read_json(record)
+            version=data.get('version')
+            metadata=root/'logs'/f'{scene_id}_{version}.json'
+            report=store.read_json(metadata) if re.fullmatch(r'v[0-9]+',str(version)) and metadata.is_file() else {}
+            status=report.get('status') or data.get('status','')
+            if status=='running' and (work/'result.json').exists():status='failed'
             local_events.append(dict(kind='tool',phase=work.name,name='Render Manim / Cairo',
-                status=data.get('status',''),detail=str(data.get('code_path') or (data.get('reference') or {}).get('code_path') or '')))
+                status=status,detail=str(data.get('code_path') or (data.get('reference') or {}).get('code_path') or '')))
     return redact(dict(job_id=job_id,scene_id=scene_id,status=job.get('status'),
         progress=job.get('progress'),summary=PHASES.get(job.get('progress'),'Đang xử lý tác vụ tạo cảnh'),
-        calls=calls,events=(events[-80:]+local_events[-20:]),source=source[:60000],source_path=source_path,
+        calls=calls,events=(events[-80:]+local_events[-20:]),plan=plan,
         references=references,streaming=any(c.get('status')=='in_flight' for c in calls)))

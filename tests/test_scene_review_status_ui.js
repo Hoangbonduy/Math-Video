@@ -49,3 +49,15 @@ sandbox.workflowTasks['generate:scene_3'].state='working';
 render();
 assert.notEqual($('scenes').children[0].attributes['aria-label'],'scene_3 · Đã duyệt','Active new generation must retain progress');
 console.log('PASS: paused/warned designs allow feedback and approval; approved status wins over stopped jobs; warnings persist; approved video matches selection');
+
+// A newer failed run must not reuse an older draft's assessment.
+sandbox.review.status='pending';
+sandbox.workflowTasks['generate:scene_3'].state='failed';
+sandbox.state.scene_generation.jobs[0].job_id='new_job';
+sandbox.state.scene_generation.jobs[0].render_status='success';
+draft.job_id='old_job';
+draft.review={summary:'OLD_REVIEW',criteria_passed:6,criteria_total:8};
+render();
+assert.ok(!flatten($('scene-progress')).some(n=>String(n.textContent).includes('OLD_REVIEW')));
+assert.ok(!flatten($('scene-progress')).some(n=>String(n.textContent).includes('6/8')));
+assert.ok(flatten($('scene-progress')).some(n=>n.textContent==='Đã render · Chưa đạt kiểm tra'));

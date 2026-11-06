@@ -51,7 +51,7 @@ def text(response,expected_model):
     return result
 
 
-def messages(root,story,design,manifest,checks):
+def messages(root,story,design,manifest,checks,*,visual_handoff=None):
     instruction=('You are the visual reviewer of a Vietnamese educational Manim scene. Inspect EVERY supplied contact-sheet panel in time order. '
       'The panels are actual encoded video frames, with timestamps. Compare the rendered explanation against EVERY storyboard criterion, including transitions and relationships. '
       'Check meaning, legibility, alignment, occlusion, moving groups, points/lines/labels, numeric values and pacing. A valid JSON or successful render is not evidence of a good scene. '
@@ -69,9 +69,22 @@ def messages(root,story,design,manifest,checks):
           'or content that cannot fit above the minimum readable font size. '
           'There is no fixed JSON geometry renderer limitation; unsupported means unavailable in the installed runtime. '
           'Geometry telemetry scans all frames, but only 3..5 encoded images are supplied. '
-          'Use telemetry for intervening motion and state uncertainty when a relationship cannot be verified. '
+          'motion_events records encoded start/end frames, animation types/targets and per-object first/last boxes, '
+          'motion envelopes and actual changed-frame counts. Frame times equal frame / video.fps. '
+          'Use these measured spans to verify short slides, shakes and bounces between the sampled images. '
+          'Animation targets state intent; visible color and assembly must still be checked in images. '
+          'Do not infer an absent animation solely from an omitted frame; state uncertainty only when neither images nor motion evidence establish it. '
+          'Encoded duration is quantized to whole frames. render_checks.duration_tolerance_seconds is the renderer-approved '
+          'tolerance (2/30 seconds at 30 FPS). Do not report duration drift within that tolerance or request sub-frame holds; '
+          'the approved narration and target duration remain immutable. '
           'Check that the 9:16 safe area and reserved caption region stay clear. Do not demand changes due to 360x640 raster blur alone; final is a native 1080x1920 render.')
-    content=[dict(type='text',text=json.dumps(dict(storyboard=story,design=design,render_checks={k:v for k,v in checks.items() if k!='states'},frame_times=[f['time'] for f in manifest['frames']]),ensure_ascii=False))]
+    if visual_handoff:
+        instruction += (' Compare against the original approved visual_handoff as well as the storyboard. '
+          'Verify global object identity, dimensions/math and invariants, inherited first-frame state, '
+          'every timeline event and verbatim caption, reveal order, end state and all approved criteria. '
+          'Do not treat intended previous_scene.end_state as proof of a rendered previous frame. '
+          'If evidence cannot establish a required state or event, report the missing evidence.')
+    content=[dict(type='text',text=json.dumps(dict(**({'visual_handoff':visual_handoff} if visual_handoff else {}),storyboard=story,design=design,render_checks={k:v for k,v in checks.items() if k!='states'},frame_times=[f['time'] for f in manifest['frames']]),ensure_ascii=False))]
     for sheet in manifest['contact_sheets']:
         path=store.project_path(root,sheet['path'])
         if store.digest(path)!=sheet['sha256']:raise WorkflowError('ARTIFACT_CHANGED','Contact sheet changed before visual review')

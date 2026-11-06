@@ -34,7 +34,8 @@ def test_activity_filters_private_reasoning_and_scopes_to_job(tmp_path):
     text=json.dumps(result)
     assert 'PRIVATE_REASONING' not in text and 'PRIVATE_PROMPT' not in text
     assert result['events'][0]['kind']=='tool'
-    assert result['source'].startswith('class GeneratedScene')
+    assert 'source' not in result and 'source_path' not in result
+    assert 'class GeneratedScene' not in text
     assert result['streaming']
     with pytest.raises(store.WorkflowError):snapshot(tmp_path,'s2','scene_job')
     with pytest.raises(store.WorkflowError):snapshot(tmp_path,'s1','../outside')
@@ -130,3 +131,19 @@ def test_query_routes_work_before_and_after_activity_request(tmp_path):
                 assert json.load(response)['job_id']=='scene_job'
     finally:
         server.shutdown();server.server_close();thread.join()
+
+
+def test_reference_failure_and_worker_success_are_reported_separately(tmp_path):
+    from src.scene_design.scene_activity import render_state
+    directory,job=make_job(tmp_path)
+    work=directory/'round_00';work.mkdir()
+    store.atomic_write(work/'references.json',dict(installed_apis=dict(missing=dict(available=False)),missing=['missing']))
+    store.atomic_write(work/'code_render.json',dict(status='running',version='v001'))
+    store.atomic_write(work/'result.json',dict(passed=False,issues=[dict(problem='Font below minimum')]))
+    (tmp_path/'logs').mkdir()
+    store.atomic_write(tmp_path/'logs/s1_v001.json',dict(status='success'))
+    result=snapshot(tmp_path,'s1','scene_job')
+    events=[e for e in result['events'] if e['kind']=='tool']
+    assert events[-2]['status']=='failed'
+    assert events[-1]['status']=='success'
+    assert render_state(tmp_path,directory,'s1')['render_status']=='success'

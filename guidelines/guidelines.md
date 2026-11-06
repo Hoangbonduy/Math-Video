@@ -41,6 +41,12 @@ Viết lời đọc tiếng Việt và mô tả hình ảnh cho một YouTube Sh
     - Chia đoạn lời đọc đã duyệt ở Pha 1 thành các cảnh `s1`, `s2`… mà **không sửa đổi bất kỳ chữ nào** của lời đọc.
     - Mỗi cảnh thường gồm 1–2 câu. Nếu có dòng 5 hoặc dòng 6, cảnh cuối phải chứa trọn phần tương ứng; có cả hai thì chứa cả hai theo thứ tự dòng 5 → dòng 6. Không ép số câu của cảnh cuối.
     - Mô tả hình ảnh, phép tính, con số và chuyển động phù hợp với nội dung từng cảnh trong `visual_intent`. Không bắt buộc chuyển toàn bộ số dài, số thập phân, đơn vị hay phép so sánh sang hình ảnh; các nội dung này có thể xuất hiện trong lời đọc theo ý tưởng.
+    - **Khai báo toàn cục — một lần ở đầu kịch bản:** Khai báo đối tượng dùng chung (tên/ID, cấu tạo, số lượng, kích thước, trạng thái ban đầu); bố cục, góc nhìn, phong cách; hệ tọa độ, đơn vị, thông số, quan hệ toán học; quy tắc kế thừa và ràng buộc xuyên suốt. Lưu ở `global_visuals`, không lặp lại dưới từng lời đọc.
+    - **Hình ảnh dưới mỗi lời đọc phải có đúng 3 mục:**
+        1. **Kế thừa & thay đổi:** `Kế thừa:` khởi tạo theo khai báo toàn cục nếu là s1, hoặc trạng thái cuối cảnh trước (ghi ID và trạng thái). `Thay đổi:` đối tượng mới kèm cấu tạo/kích thước, đối tượng bỏ, đổi bố cục, gọi lại trạng thái cũ, hoặc giữ nguyên.
+        2. **Timeline hình ảnh:** Mỗi mốc một dòng theo dạng `Mốc giây cục bộ hoặc mốc lời đọc/sự kiện → Đối tượng/nhóm → Thao tác + thông số/đích đến → Chữ, số nguyên văn và điểm nhấn đồng thời nếu có → Kết quả`. Ghi “Không có” nếu không có chữ/điểm nhấn. Kết thúc mục bằng `Kết cảnh:` ghi vị trí, trạng thái, giá trị của các đối tượng giữ sang cảnh sau.
+        3. **Tiêu chí đạt:** Ít nhất một tiêu chí kết quả hình học/chuyển động/hiển thị cụ thể và một tiêu chí riêng về ý nghĩa, thứ tự hoặc thời điểm tiết lộ thông tin.
+    - Giây trong timeline là giây **cục bộ của từng cảnh**, bắt đầu từ 0; có thể dùng mốc lời đọc/sự kiện khi chưa có thời lượng audio. Dùng ID ổn định, không tự reset vật thể giữa các cảnh; gọi lại trạng thái cũ phải ghi rõ trong Thay đổi.
     - **Nếu có dòng 5:** Trong `visual_intent` cảnh cuối, ghi rõ câu hỏi hiện thành chữ trên màn hình và không hiển thị đáp án.
     - **Nếu có dòng 6:** Trong `visual_intent` cảnh cuối, ghi rõ hình ảnh Manim tiếp tục chuyển động trong lúc đọc câu chốt.
     - Nếu không có dòng 5 hoặc dòng 6, không tự thêm phần tương ứng vào cảnh cuối.
@@ -58,3 +64,5 @@ Viết lời đọc tiếng Việt và mô tả hình ảnh cho một YouTube Sh
 - [Pha 2] Nếu có dòng 5 hoặc dòng 6, cảnh cuối đã chứa trọn phần tương ứng chưa?
 - [Pha 2] Nếu có dòng 5, `visual_intent` cảnh cuối đã ghi rõ việc hiện câu hỏi và không hiển thị đáp án chưa?
 - [Pha 2] Nếu có dòng 6, `visual_intent` cảnh cuối đã ghi rõ việc giữ chuyển động khi đọc câu chốt chưa?
+
+- [Pha 2] Đã có một khai báo toàn cục và đủ ba mục hình ảnh dưới từng lời đọc, với trạng thái cuối cảnh trước được kế thừa nhất quán chưa?

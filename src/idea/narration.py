@@ -5,11 +5,12 @@ import re
 
 from src.idea.content import (SCRIPT_SCHEMA, _object, _TEXT, align_evidence_spacing,
                               check_schema, validate_script, writing_messages, narration_budget)
+from src.idea.visuals import VISUAL_INSTRUCTIONS
 from src.idea.guidelines import (extract_goal_info, load_guidelines,
                                   guidelines_for_phase, user_idea_source)
 from src.shared._workflow_store import WorkflowError
 
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 NARRATION_SCHEMA = _object(dict(title=_TEXT, main_idea=_TEXT,
                                claims=SCRIPT_SCHEMA['properties']['claims'], narration=_TEXT))
 CRITIQUE_RULES = tuple([f'rule_{index}' for index in range(1, 9)] +
@@ -80,8 +81,9 @@ def editing_messages(topic, brief, sources, draft, *, previous=None, feedback=No
         'Giữ nguyên title, main_idea, claims và bằng chứng. '
         'Mô tả hình ảnh, số và chuyển động phù hợp trong visual_intent; cho phép số chi tiết trong lời đọc theo ý tưởng. '
         'Nếu có câu hỏi cuối, visual_intent cảnh cuối phải chứa nguyên văn câu hỏi; '
-        'không hiển thị đáp án. Chỉ khi có dòng 6, hình vẫn chuyển động khi đọc toàn bộ câu chốt. Trả SCRIPT_SCHEMA, không trả narration_draft.')
+        'không hiển thị đáp án. Chỉ khi có dòng 6, hình vẫn chuyển động khi đọc toàn bộ câu chốt. Trả kịch bản theo schema được cung cấp, có global_visuals, không trả narration_draft.')
     context = json.loads(messages[1]['content'])
+    messages[0]['content'] += '\n' + VISUAL_INSTRUCTIONS
     context['narration_draft'] = draft
     messages[1]['content'] = json.dumps(context, ensure_ascii=False)
     return messages

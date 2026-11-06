@@ -81,6 +81,37 @@ function renderIdea() {
   start.disabled = ideaBusy || workflowBusy || !apiCompatible;
   renderScript();
 }
+
+const globalVisualLabels = [
+  ['objects', 'Đối tượng dùng chung'],
+  ['layout', 'Bố cục, góc nhìn và phong cách hình ảnh'],
+  ['math', 'Hệ tọa độ, đơn vị, thông số và quan hệ toán học'],
+  ['continuity', 'Quy tắc kế thừa trạng thái và ràng buộc xuyên suốt']
+];
+function renderGlobalVisuals(parent, script) {
+  if (!script?.global_visuals) return;
+  const box = el('div', undefined, parent, 'script-global-visuals');
+  el('h3', 'Khai báo toàn cục', box);
+  for (const [key, label] of globalVisualLabels) {
+    el('h4', label, box);
+    const text = el('p', script.global_visuals[key], box);
+    text.style.whiteSpace = 'pre-wrap';
+  }
+}
+function renderSceneVisuals(parent, visual) {
+  const box = el('div', undefined, parent, 'script-visuals');
+  el('h4', 'Hình ảnh', box);
+  // Render as text nodes: captions, math and user edits must never become HTML.
+  for (const line of visual.split('\n')) {
+    if (['1. Kế thừa & thay đổi', '2. Timeline hình ảnh', '3. Tiêu chí đạt'].includes(line.trim())) {
+      el('h4', line.trim(), box);
+    } else if (line.trim()) {
+      const text = el('p', line, box);
+      text.style.whiteSpace = 'pre-wrap';
+    }
+  }
+}
+
 function renderScript() {
   const panel = el('section', undefined, $('idea-page'), 'card revision-panel');
   panel.id = 'script-review';
@@ -126,6 +157,7 @@ function renderScript() {
   el('p', artifact.version + (context.duration_estimate?.estimated_seconds ? ' · Ước tính ' + context.duration_estimate.estimated_seconds.toFixed(1) + ' giây' : ''), panel, 'muted');
   if (context.script?.title) el('h3', context.script.title, panel);
   if (context.script?.main_idea) el('p', context.script.main_idea, panel);
+  renderGlobalVisuals(panel, context.script);
   for (const scene of scenes) {
     const section = el('div', undefined, panel, 'script-scene');
     const header = el('div', undefined, section, 'script-scene-header');
@@ -160,11 +192,11 @@ function renderScript() {
       };
 
       const visField = el('label', undefined, editBox, 'field');
-      el('span', 'Hình ảnh (ý tưởng minh họa)', visField);
+      el('span', 'Hình ảnh: kế thừa & thay đổi, timeline, tiêu chí đạt', visField);
       const visArea = el('textarea', undefined, visField, 'script-edit-visual');
       visArea.id = 'edit-visual-' + scene.scene_id;
       visArea.value = currentDraft.visual_intent ?? scene.visual_intent;
-      visArea.placeholder = 'Nhập mô tả hình ảnh cho cảnh…';
+      visArea.placeholder = '1. Kế thừa & thay đổi\nKế thừa: …\nThay đổi: …\n2. Timeline hình ảnh\n- Mốc cục bộ/lời đọc/sự kiện → Đối tượng/nhóm → Thao tác + thông số/đích đến → Chữ, số nguyên văn và điểm nhấn → Kết quả\nKết cảnh: …\n3. Tiêu chí đạt\n- Kết quả cần kiểm tra\n- Điều kiện về ý nghĩa, thứ tự hoặc thời điểm tiết lộ';
       visArea.oninput = () => {
         const d = scriptDrafts.get(draftKey) || { narration: scene.narration, visual_intent: scene.visual_intent };
         d.visual_intent = visArea.value;
@@ -204,7 +236,7 @@ function renderScript() {
       });
     } else {
       el('p', scene.narration, section);
-      el('small', 'Hình ảnh: ' + scene.visual_intent, section);
+      renderSceneVisuals(section, scene.visual_intent);
     }
   }
 

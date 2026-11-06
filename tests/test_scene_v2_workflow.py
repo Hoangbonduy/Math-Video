@@ -60,11 +60,12 @@ class WorkflowTests(unittest.TestCase):
         cycle=rev.resume_revision(self.root,cycle['id']);self.assertEqual(cycle['status'],'awaiting_clip')
         current=wf.get_status(self.root);latest=next(a for a in reversed(current['artifacts']) if a['stage']=='scene_clip')
         self.assertEqual(latest['sha256'],candidate['manim_render']['sha256'])
-    def test_failed_visual_review_does_not_register_design(self):
+    def test_failed_visual_review_keeps_draft_pending_human_approval(self):
         self.vision.reviews=[[dict(category='timing',beat_id='approach',object_ids=[],time=1,problem='Nhịp chưa đạt.',fix='Sửa timeline.')]]
-        with self.assertRaisesRegex(store.WorkflowError,'SCENE_GENERATION_FAILED'):wf.run_workflow(self.root,ai=True)
-        result=wf.get_status(self.root);self.assertEqual(result['stage'],'scene_design');self.assertFalse(result['pending_reviews'])
-        self.assertFalse(any(a['stage']=='scene_design' for a in result['artifacts']))
+        result=wf.run_workflow(self.root,ai=True)
+        self.assertEqual(result['stage'],'scene_design');self.assertEqual(len(result['pending_reviews']),1)
+        self.assertFalse(result['pending_reviews'][0]['quality_passed'])
+        self.assertFalse(any(r['stage']=='scene_design' and r['status']=='approved' for r in result['review_history']))
 
 
 class V2AutoContinueHTTPTests(unittest.TestCase):
@@ -79,7 +80,8 @@ class V2AutoContinueHTTPTests(unittest.TestCase):
             vision=VisionRouter([[issue],[issue],[issue],[]])
             def context(root,project,reviews):
                 return wf._latest(project,'script',None),store.read_json(root/'input.json'),{f'scene_{i}':3 for i in (1,2,3)}
-            with patch.object(sg,'DESIGN_PIPELINE_VERSION',2), patch('src.scene_design.scene_generation.CLIENT_FACTORY',return_value=router), \
+            with patch('src.scene_design.scene_pipeline.reviewable_draft',return_value=None), \
+                 patch.object(sg,'DESIGN_PIPELINE_VERSION',2), patch('src.scene_design.scene_generation.CLIENT_FACTORY',return_value=router), \
                  patch('src.scene_design.scene_vision.CLIENT_FACTORY',return_value=vision), \
                  patch('src.scene_design.scene_generation._context',side_effect=context), \
                  patch('src.shared.ai_config.scene_trial_enabled',return_value=True), \
@@ -87,7 +89,7 @@ class V2AutoContinueHTTPTests(unittest.TestCase):
                 server=ReviewServer(root,0)
                 thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
                 try:
-                    data=json.dumps(dict(request_id='v2-http-auto-sequence',scene_id='scene_1',new_attempt=True)).encode()
+                    data=json.dumps(dict(request_id='v2-http-auto-sequence',new_attempt=False)).encode()
                     def post():
                         request=urllib.request.Request(server.origin+'/api/continue',data=data,
                             headers={'Origin':server.origin,'X-Review-Token':server.token,'Content-Type':'application/json'})

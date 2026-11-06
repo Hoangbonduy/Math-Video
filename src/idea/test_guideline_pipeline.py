@@ -73,6 +73,28 @@ def script_fixture(with_question=True):
                 for index, group in enumerate(groups)])
 
 
+def visual_script_fixture(script):
+    script = copy.deepcopy(script)
+    script['global_visuals'] = dict(
+        objects='paper: một tờ giấy hình chữ nhật 2 × 3, độ dày ban đầu 0,1 mm.',
+        layout='Nhìn chính diện, giấy ở giữa; chữ trắng trên nền tối.',
+        math='Độ dày sau n lần gấp: 0,1 × 2^n mm; trục đứng biểu diễn mm.',
+        continuity='Giữ ID paper và bộ đếm n; không reset nếu chưa ghi rõ.')
+    for index, scene in enumerate(script['scenes']):
+        inherited = ('Khởi tạo theo khai báo toàn cục: paper ở giữa, n = 0.' if index == 0 else
+                     'Trạng thái cuối ' + script['scenes'][index - 1]['scene_id'] +
+                     ': paper ở giữa, giữ bộ đếm.')
+        scene['visual_intent'] = (
+            '1. Kế thừa & thay đổi\nKế thừa: ' + inherited +
+            '\nThay đổi: Giữ nguyên bố cục, cập nhật nhãn theo lời đọc.'
+            '\n2. Timeline hình ảnh\n- Khi bắt đầu lời đọc → paper → Giữ ở giữa khung → ' +
+            scene['visual_intent'] + ' → Giữ rõ nhãn và giấy.'
+            '\nKết cảnh: paper ở giữa, giữ giá trị bộ đếm hiện tại.'
+            '\n3. Tiêu chí đạt\n- Giấy và nhãn hiển thị rõ, không chồng chữ.'
+            '\n- Hiện thông tin đúng thứ tự lời đọc, không tiết lộ đáp án.')
+    return script
+
+
 def draft_fixture(with_question=True):
     script = script_fixture(with_question)
     return dict(title=script['title'], main_idea=script['main_idea'], claims=script['claims'],
@@ -121,6 +143,8 @@ class GuidelineRouter(FakeRouter):
                 return result
             else:
                 value = draft_fixture()
+            if 'global_visuals' in schema:
+                value = visual_script_fixture(value)
             result['choices'][0]['message']['content'] = json.dumps(value, ensure_ascii=False)
         return result
 
@@ -302,8 +326,15 @@ class GuidelinePipeline(unittest.TestCase):
         approved = store.read_json(directory / 'approved_narration.json')
         script = store.read_json(directory / 'script.json')['script']
         self.assertEqual(' '.join(scene['narration'] for scene in script['scenes']), approved['narration'])
+        self.assertEqual(set(script['global_visuals']), {'objects', 'layout', 'math', 'continuity'})
+        from src.idea.visuals import validate_visuals
+        validate_visuals(script)
+        exported = (directory / 'script.md').read_text()
+        self.assertEqual(exported.count('## Khai báo toàn cục'), 1)
+        self.assertLess(exported.index('## Khai báo toàn cục'), exported.index('## Lời đọc'))
+        self.assertEqual(exported.count('#### 1. Kế thừa & thay đổi'), len(script['scenes']))
         self.assertTrue(store.read_json(directory / 'critique.json')['all_passed'])
-        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], 5)
+        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], 6)
         run_workflow(self.project, ai=True)
         self.assertEqual(len(self.router.requests), 4)
 
@@ -317,6 +348,40 @@ class GuidelinePipeline(unittest.TestCase):
         self.assertEqual(state['status'], 'awaiting_review')
         self.assertEqual(len(self.router.requests), 4)
         self.assertEqual(self.router.preflights, 1)
+
+    def test_visual_edits_preserve_globals_and_reject_incomplete_handoff_before_writing(self):
+        from src.idea.service import edit_script
+        state = run_workflow(self.project, ai=True)
+        artifact = state['pending_reviews'][0]
+        path = self.project / artifact['bundle']['script.json']['path']
+        before = path.read_bytes()
+        script = store.read_json(path)['script']
+        scene = script['scenes'][0]
+        with self.assertRaises(store.WorkflowError):
+            edit_script(self.project, artifact['version'], scene_id=scene['scene_id'],
+                        visual_intent='Thiếu ba mục', expected_sha256=artifact['sha256'])
+        self.assertEqual(path.read_bytes(), before)
+        updated = scene['visual_intent'].replace('Giữ nguyên bố cục', 'Giữ nguyên bố cục và góc nhìn')
+        edit_script(self.project, artifact['version'], scene_id=scene['scene_id'],
+                    visual_intent=updated, expected_sha256=artifact['sha256'])
+        saved = store.read_json(path)['script']
+        self.assertEqual(saved['global_visuals'], script['global_visuals'])
+        self.assertEqual(saved['scenes'][0]['visual_intent'], updated)
+
+    def test_slicer_cannot_submit_missing_visual_criteria(self):
+        complete = self.router.complete
+        def incomplete(payload):
+            result = complete(payload)
+            if 'tools' not in payload and 'global_visuals' in payload['response_format']['json_schema']['schema']['properties']:
+                value = json.loads(result['choices'][0]['message']['content'])
+                value['scenes'][0]['visual_intent'] = value['scenes'][0]['visual_intent'].split('3. Tiêu chí đạt')[0]
+                result['choices'][0]['message']['content'] = json.dumps(value)
+            return result
+        self.router.complete = incomplete
+        with self.assertRaises(store.WorkflowError):
+            run_workflow(self.project, ai=True)
+        self.assertFalse(get_status(self.project)['artifacts'])
+        self.assertEqual(len(self.router.requests), 6)
 
     def test_new_guidelines_change_next_job_fingerprint(self):
         first = run_workflow(self.project, ai=True)

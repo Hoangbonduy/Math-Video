@@ -31,19 +31,20 @@ class TrialTests(unittest.TestCase):
                 self.assertEqual(old_path.read_bytes(),old_bytes)
                 self.assertFalse(wf.get_status(root)['pending_reviews'])
 
-    def test_visual_failure_does_not_trigger_a_second_round_or_publish(self):
-        from src.scene_design.design import DEFAULT_CONFIG
+    def test_visual_failure_keeps_one_reviewable_draft_without_auto_repair(self):
+        from tests.scene_v2_support import legacy_config
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);work=root/'job';work.mkdir();router=DesignRouter()
             vision=VisionRouter([[dict(category='timing',beat_id='approach',object_ids=[],time=1,problem='Chưa đạt nhịp.',fix='Sửa nhịp.')]])
             job=dict(job_id='trial',input=dict(trial_mode=True,max_repairs=0),calls=[],status='working',pricing=router.preflight(search=False))
-            context=dict(scene=dict(scene_id='scene_1',narration=story()['narration']),script={},brief={},target_seconds=3,config=copy.deepcopy(DEFAULT_CONFIG),feedback=None)
+            context=dict(scene=dict(scene_id='scene_1',narration=story()['narration']),script={},brief={},target_seconds=3,config=legacy_config(),feedback=None)
             with patch('src.scene_design.scene_vision.CLIENT_FACTORY',return_value=vision):
-                with self.assertRaisesRegex(store.WorkflowError,'1 lượt'):pipeline.generate(root,work,Session(work,job,router,budget_usd=.5),context)
+                path,extra=pipeline.generate(root,work,Session(work,job,router,budget_usd=.5),context)
+                self.assertFalse(extra['quality_passed'])
             self.assertEqual(len(vision.requests),1);self.assertEqual(len(list(work.glob('round_*'))),1)
-            self.assertFalse((work/'design.json').exists());self.assertEqual(job['max_repairs'],0)
+            self.assertTrue(path.exists());self.assertEqual(job['max_repairs'],0)
             calls=len(job['calls'])
-            with self.assertRaises(store.WorkflowError):pipeline.generate(root,work,Session(work,job,router,budget_usd=.5),context)
+            self.assertEqual(pipeline.generate(root,work,Session(work,job,router,budget_usd=.5),context)[0],path)
             self.assertEqual(len(job['calls']),calls)
 
     def test_visual_review_accepts_known_groups_and_rejects_unknown_ids(self):

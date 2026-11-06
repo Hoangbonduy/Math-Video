@@ -40,13 +40,15 @@ function renderSceneProgress(artifact) {
   const paused=!approved && !running && (task?.state==='paused' || job?.status==='paused');
   const failed=!running && (artifact?.quality_passed===false || job?.quality_issues?.length || (!paused && (task?.state==='failed' || job?.status==='failed' || batchFailure)));
   const draft=state.scene_drafts?.[sid];
+  const matchingDraft=draft && (!job?.job_id || draft.job_id===job.job_id) && (!job?.render_version || draft.reference?.version===job.render_version);
+  const draftReview=matchingDraft ? draft.review : null;
   const rendered=artifact?.manim_render || state.design_previews?.[sid+':'+latest(sid,'scene_design')?.version] || draft?.reference;
   const ready=!paused && !running && !failed && rendered?.renderer==='manim';
   panel.className='scene-progress'+(failed?' error':'');
   panel.setAttribute('aria-busy',String(Boolean(running)));
   if(running){const spinner=el('span',undefined,panel,'spinner');spinner.setAttribute('aria-hidden','true');}
   const body=el('div',undefined,panel,'scene-progress-body');
-  el('strong',running ? task.state==='pausing'?'Đang tạm dừng…':task.state==='queued'?'Đang xếp hàng':scenePhase(job) : approved?'Đã duyệt':paused?'Đã tạm dừng · Chờ ghi chú duyệt':failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':rendered?'Đã dựng bản nháp · Cần chỉnh sửa':'Đã dừng · Chưa render được cảnh'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
+  el('strong',running ? task.state==='pausing'?'Đang tạm dừng…':task.state==='queued'?'Đang xếp hàng':scenePhase(job) : approved?'Đã duyệt':paused?'Đã tạm dừng · Chờ ghi chú duyệt':failed?(batchFailure?'Tác vụ dừng trước khi tạo cảnh':job?.render_status==='success'?'Đã render · Chưa đạt kiểm tra':rendered?(!matchingDraft && job?.status==='failed'?'Lượt mới bị lỗi · Đang giữ bản nháp trước':'Đã dựng bản nháp · Cần chỉnh sửa'):'Đã dừng · Chưa có bản nháp đạt kiểm tra'):ready?'Video Manim đã sẵn sàng':'Chưa chạy tạo cảnh Manim',body);
   const engine = job?.kind==='saved_design_render' ? 'Thiết kế Codex đã lưu · Dựng tại máy' : (job?.kind === 'manim_design_preview' || job?.preview_engine === 'json') ? 'Preview từ thiết kế · Chạy tại máy' : 'AI: '+(job?.model || state.scene_generation?.model || 'Đang đọc cấu hình');
   el('p','Cảnh '+String(state.scene_ids.indexOf(sid)+1).padStart(2,'0')+' · '+engine+' · Render: Manim / Cairo',body);
   if(job?.design_pipeline===3)el('p','Kịch bản + phong cách + khả năng hệ thống → kế hoạch → mã Manim → render 360 × 640 / 30 FPS → đánh giá hình · '+sceneRepairLabel(job),body);
@@ -63,7 +65,7 @@ function renderSceneProgress(artifact) {
   else if(failed){
     const error=job?.last_error || task?.error || batchFailure?.error || 'Không hoàn tất tạo cảnh.';
     if(job?.quality_issues?.length){
-      el('p',draft?.review?.summary || 'Bản nháp đã dựng nhưng chưa đạt các tiêu chí hình ảnh dưới đây.',body,'scene-error');
+      el('p',draftReview?.summary || (job?.render_status==='success'?'Video đã render; các kiểm tra dưới đây chưa đạt.':'Lượt tạo cảnh hiện tại gặp các lỗi dưới đây.'),body,'scene-error');
       const issues=el('ol',undefined,body,'scene-quality-issues');
       for(const issue of job.quality_issues){
         const row=el('li',undefined,issues);
@@ -74,7 +76,8 @@ function renderSceneProgress(artifact) {
       const details=el('details',undefined,body);el('summary','Chi tiết kỹ thuật',details);
       el('pre',error+'\n\n'+JSON.stringify(job.quality_issues,null,2),details);
     }else el('p',error.length>900?error.slice(0,900)+'…':error,body,'scene-error');
-    if(draft?.review?.criteria_total)el('p',draft.review.criteria_passed+'/'+draft.review.criteria_total+' tiêu chí storyboard đạt'+(job?.quality_issues?.length?' · Còn '+job.quality_issues.length+' lỗi cần sửa':'')+' · Bản nháp vẫn xem được bên dưới.',body);
+    if(draftReview?.criteria_total)el('p',draftReview.criteria_passed+'/'+draftReview.criteria_total+' tiêu chí storyboard đạt'+(job?.quality_issues?.length?' · Còn '+job.quality_issues.length+' lỗi cần sửa':'')+' · Bản nháp vẫn xem được bên dưới.',body);
+    if(draft && !matchingDraft)el('p','Video và nhận xét của bản nháp trước thuộc lượt khác; các lỗi trên thuộc lượt tạo hiện tại.',body,'muted');
     const progressActions=el('div',undefined,body,'actions');
     if(artifact && ['pending','changes_requested'].includes(reviewFor(artifact)?.status)){
       button(progressActions,artifact.stage==='scene_design'?'Duyệt thiết kế':'Duyệt bản dựng',()=>action('approve',{stage:artifact.stage,scene_id:sid,version:artifact.version,sha256:artifact.sha256,preview_sha256:state.design_previews?.[sid+':'+artifact.version]?.sha256 || artifact.manim_render?.sha256}),'primary');
@@ -353,7 +356,7 @@ function renderSceneActivity(parent,job) {
     sceneActivityView.jobId=job.job_id;sceneActivityView.data=null;sceneActivityView.error=null;
   }
   const details=el('details',undefined,parent,'scene-agent-activity');
-  el('summary','Xem agent đang làm gì · Mã và tool',details);
+  el('summary','Xem agent đang làm gì · Kế hoạch và tool',details);
   details.open=sceneActivityView.open;
   const content=el('div',undefined,details);content.id='scene-agent-activity-content';
   paintSceneActivity();
@@ -364,39 +367,64 @@ function renderSceneActivity(parent,job) {
   });
   if(details.open && !sceneActivityView.timer && !sceneActivityView.pending)refreshSceneActivity();
 }
+function activityStep(phase) {
+  if(/plan|storyboard/.test(phase))return {title:'Lập kế hoạch hình ảnh',action:'Đọc lời dẫn và phong cách, xác định hình sẽ hiện và cách chuyển động.',tool:'Agent lập kế hoạch'};
+  if(/review|vision/.test(phase))return {title:'Đánh giá hình ảnh',action:'Xem ảnh lấy từ video, đối chiếu bố cục và chuyển động với tiêu chí.',tool:'Agent đánh giá hình ảnh'};
+  if(/code|design/.test(phase))return {title:'Dựng hoặc chỉnh cảnh',action:'Triển khai kế hoạch thành cảnh chuyển động; điều chỉnh theo lỗi của lượt trước.',tool:'Agent dựng cảnh'};
+  return {title:scenePhases[phase] || 'Xử lý cảnh',action:'Thực hiện bước tiếp theo của quy trình tạo cảnh.',tool:'Agent tạo cảnh'};
+}
+function activityStatus(status) {
+  return ({complete:'Đã xong',completed:'Đã xong',success:'Đã xong',in_flight:'Đang làm',running:'Đang làm',failed:'Có lỗi',error:'Có lỗi',pending:'Chờ thực hiện'})[status] || 'Đã ghi nhận';
+}
 function paintSceneActivity() {
   const content=$('scene-agent-activity-content');
   if(!content)return;
   content.replaceChildren();
   const data=sceneActivityView.data;
   if(sceneActivityView.error)el('p',sceneActivityView.error,content,'scene-error');
-  if(!data){el('p','Mở ô này để xem hoạt động của lượt tạo cảnh.',content);return;}
+  if(!data){el('p','Mở ô này để xem kế hoạch và các tool của lượt tạo cảnh.',content);return;}
   el('strong',data.summary,content);
-  el('p','Tóm tắt bước đang làm, các lời gọi tool và mã đã nhận. Tự cập nhật mỗi 2 giây khi mở.',content,'muted');
+  el('p','Tóm tắt việc sẽ làm, tool sử dụng và kết quả từng bước. Tự cập nhật mỗi 2 giây khi mở.',content,'muted');
+  el('h4','Kế hoạch thực hiện',content);
+  const roadmap=el('ol',undefined,content);
+  for(const [action,tool] of [
+    ['Đọc kịch bản và phong cách để lập kế hoạch hình ảnh, chuyển động.','Agent lập kế hoạch'],
+    ['Tra cách sử dụng các API cần cho cảnh.','Tra API / reference'],
+    ['Dựng cảnh theo kế hoạch và kiểm tra mã hợp lệ.','Agent dựng cảnh · Kiểm tra mã'],
+    ['Render video và đo bố cục, cỡ chữ, vùng an toàn.','Render Manim / Cairo · Kiểm tra bố cục'],
+    ['Lấy ảnh từ video để đánh giá; sửa theo lỗi nếu còn lượt, rồi đưa kết quả để duyệt.','Trích frame bằng FFmpeg · Agent đánh giá hình ảnh']
+  ]){const row=el('li',action,roadmap);el('small','Tool: '+tool,row);}
+  if(data.plan?.length){
+    el('h4','Hình ảnh dự kiến của cảnh',content);
+    for(const beat of data.plan){
+      const row=el('div',undefined,content);
+      if(beat.show)el('p','Sẽ hiện: '+beat.show,row);
+      if(beat.motion)el('p','Chuyển động: '+beat.motion,row);
+    }
+  }
   if(data.calls?.length){
-    el('h4','Các bước gọi agent',content);
+    el('h4','Tiến trình thực tế',content);
     const list=el('ol',undefined,content);
-    for(const call of data.calls)el('li',call.phase+' · '+call.status,list);
+    for(const call of data.calls){
+      const step=activityStep(call.phase || '');
+      const row=el('li',undefined,list);
+      const round=/(\d+)$/.exec(call.phase || '');
+      el('strong',step.title+(round?' · Lượt '+(Number(round[1])+1):'')+' · '+(call.status==='complete'?'Đã trả kết quả':activityStatus(call.status)),row);
+      el('p',step.action,row);
+      el('small','Lời gọi model: '+step.tool,row);
+
+    }
   }
-  if(data.references?.length){
-    const names=data.references.map(api=>api.name+(api.available?' ✓':' · chưa có'));
-    el('p','API đã kiểm tra: '+names.join(', '),content);
-  }
-  el('h4','Tool và sự kiện',content);
-  const events=data.events || [];
-  if(!events.length)el('p',data.streaming?'Agent đang xử lý; chưa có sự kiện công khai mới.':'Chưa có sự kiện tool được ghi cho lượt này.',content);
+  el('h4','Thao tác hệ thống và tool đã gọi',content);
+  const events=(data.events || []).filter(event=>event.kind==='tool');
+  if(!events.length)el('p',data.streaming?'Agent đang xử lý; chưa ghi nhận lời gọi tool mới.':'Chưa ghi nhận lời gọi tool cho lượt này.',content);
   for(const event of events){
-    if(event.kind==='code')continue;
     const row=el('details',undefined,content,'agent-event');
-    const title=event.kind==='tool'?(event.name+' · '+event.status):(event.kind==='message'?'Thông báo của agent':event.status);
-    el('summary',(event.phase?event.phase+' · ':'')+title,row);
-    if(event.detail || event.text)el('pre',event.detail || event.text,row);
+    const round=/round_(\d+)/.exec(event.phase || '');
+    el('summary',(round?'Lượt '+(Number(round[1])+1)+' · ':'')+event.name+' · '+activityStatus(event.status),row);
+    if(event.detail)el('p',event.detail,row);
   }
-  el('h4','Mã Manim',content);
-  if(data.source){
-    if(data.source_path)el('small',data.source_path,content);
-    el('pre',data.source,content,'agent-source');
-  }else el('p','Chưa nhận được mã. Mã sẽ xuất hiện khi agent trả kết quả; không phải model nào cũng truyền mã từng ký tự.',content);
+  if(data.status==='failed')el('p','Lượt này đã dừng. Bước tiếp theo là xử lý các lỗi kiểm tra hiển thị phía trên rồi chạy lại cảnh.',content);
 }
 async function refreshSceneActivity() {
   clearTimeout(sceneActivityView.timer);sceneActivityView.timer=null;

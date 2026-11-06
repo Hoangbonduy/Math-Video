@@ -9,7 +9,7 @@ from src.scene_design import scene_generation as sg
 from src.scene_design import scene_pipeline as pipeline
 from src.shared.job_session import Session
 from src.scene_design.design import DEFAULT_CONFIG
-from tests.scene_v2_support import design,vehicle,story,DesignRouter,VisionRouter,binding,obj
+from tests.scene_v2_support import legacy_config, design,vehicle,story,DesignRouter,VisionRouter,binding,obj
 
 
 class ContractTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class ContractTests(unittest.TestCase):
 class RealRenderTests(unittest.TestCase):
     def test_render_relations_and_actual_audit(self):
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);work=root/'draft';work.mkdir();config=copy.deepcopy(DEFAULT_CONFIG);config['render']['resolution']=[640,360]
+            root=Path(folder);work=root/'draft';work.mkdir();config=legacy_config();config['render']['resolution']=[640,360]
             ref,checks,evidence=renderer.render(root,work,{},design(),dict(assets=[]),config,story())
             self.assertTrue(checks['passed'],checks);self.assertGreater(len(checks['states']),3)
             self.assertGreater(len(evidence['frames']),3)
@@ -71,7 +71,7 @@ class ExtraRenderTests(unittest.TestCase):
             d=vehicle(seconds=1);d['objects'].append(dict(obj('picture','image',.8,.2,.1,.1),asset_id='test'))
             d['groups'].append(dict(id='whole',members=['car']))
             d['timeline'].extend([dict(object_id='whole',action='rotate',start=0,duration=1,dx=0,dy=0,value=10,easing='linear'),dict(object_id='whole',action='scale',start=0,duration=1,dx=0,dy=0,value=.9,easing='linear')])
-            sc=story(seconds=1);ref,checks,manifest=renderer.render(root,work,{},d,dict(assets=[dict(asset_id='test',path='asset.png')]),DEFAULT_CONFIG,sc)
+            sc=story(seconds=1);ref,checks,manifest=renderer.render(root,work,{},d,dict(assets=[dict(asset_id='test',path='asset.png')]),legacy_config(),sc)
             self.assertTrue(checks['passed'],checks);self.assertTrue((root/ref['path']).is_file())
 
 
@@ -80,7 +80,7 @@ class PipelineTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name);self.directory=self.root/'generation/test';self.directory.mkdir(parents=True)
         self.router=DesignRouter();self.vision=VisionRouter();self.job=dict(job_id='test',input={},calls=[],status='working',pricing=self.router.preflight(search=False))
         self.session=Session(self.directory,self.job,self.router,budget_usd=.5)
-        self.story=story();self.context=dict(scene=dict(scene_id='scene_1',narration=self.story['narration']),script=dict(title='Cát tuyến',scenes=[]),brief={},target_seconds=3,config=copy.deepcopy(DEFAULT_CONFIG),feedback=None)
+        self.story=story();self.context=dict(scene=dict(scene_id='scene_1',narration=self.story['narration']),script=dict(title='Cát tuyến',scenes=[]),brief={},target_seconds=3,config=legacy_config(),feedback=None)
         patcher=patch('src.scene_design.scene_vision.CLIENT_FACTORY',lambda:self.vision);patcher.start();self.addCleanup(patcher.stop)
     def test_full_pipeline_actual_render_visual_gate_and_cache(self):
         path,extra=pipeline.generate(self.root,self.directory,self.session,self.context)

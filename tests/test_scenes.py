@@ -67,18 +67,26 @@ class SceneFlowTests(unittest.TestCase):
 
     def approved(self,count=2,topic='Đạo hàm'):
         create_project(self.root,topic)
-        router=FakeRouter()
-        original=router.complete
-        def content(payload):
-            r=original(payload)
-            if 'tools' not in payload:
-                s=valid_script(); narration=s['scenes'][0]['narration']+' '+s['scenes'][1]['narration']
-                words=narration.split(); s['title']=topic
-                s['scenes']=[dict(scene_id=f'scene_{i+1}',narration=' '.join(words[i*len(words)//count:(i+1)*len(words)//count]),visual_intent='Minh họa',claim_refs=['claim_01']) for i in range(count)]
-                r['choices'][0]['message']['content']=json.dumps(s,ensure_ascii=False)
-            return r
-        with patch('src.idea.generation.CLIENT_FACTORY',return_value=router),patch('src.idea.research.fetch_html',side_effect=fake_fetch):
-            router.complete=content; run_workflow(self.root,ai=True)
+        # Scene tests start at an approved script gate. Do not fake the separate
+        # narration/critic/slicer pipeline with an obsolete all-in-one response.
+        script=valid_script();words=' '.join(sc['narration'] for sc in script['scenes']).split()
+        script['title']=topic
+        script['scenes']=[dict(scene_id=f'scene_{i+1}',narration=' '.join(words[i*len(words)//count:(i+1)*len(words)//count]),
+                              visual_intent='Minh họa',claim_refs=['claim_01']) for i in range(count)]
+        directory=self.root/'generation/script_fixture';directory.mkdir(parents=True)
+        payloads={'script.json':dict(script=script,brief={}),
+                  'research.json':dict(sources=[],claims=script['claims']),
+                  'generation.json':dict(model=MODEL,calls=[])}
+        for name,data in payloads.items():store.atomic_write(directory/name,data)
+        source=self.root/'fixture_script.md';source.write_text(' '.join(words),encoding='utf-8')
+        wf.submit_artifact(self.root,'script','v001',source,scene_ids=[sc['scene_id'] for sc in script['scenes']])
+        with store.locked_project(self.root):
+            project,reviews=wf._load(self.root)
+            artifact=wf._latest(project,'script',None)
+            artifact.update(origin='ai',job_id='script_fixture',bundle={name:dict(path=str((directory/name).relative_to(self.root)),sha256=store.digest(directory/name)) for name in payloads})
+            wf._save(self.root,project,reviews)
+        from tests.scene_v2_support import legacy_config
+        store.atomic_write(self.root/'scene_config.json',legacy_config())
         return record_review(self.root,'script','v001','approve',read_seconds=30)
 
     def test_two_topics_different_scene_counts_and_all_gates(self):
