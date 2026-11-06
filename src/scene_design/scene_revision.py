@@ -112,7 +112,9 @@ def _session(root,revision,phase,sid,retry):
         if (directory/'job.json').exists(): job=store.read_json(directory/'job.json')
         elif any(directory.iterdir()): raise WorkflowError('STATE_MISSING','C6 job ledger is missing')
         else:
-            job=dict(job_id=job_id,input=dict(stage=phase,scene_id=sid,revision_id=revision['id'],model=get_model()),calls=[],status='working',created_at=_now())
+            from src.shared.system_contract import load_contract
+            from src.scene_design.manim_runtime import info
+            job=dict(job_id=job_id,input=dict(stage=phase,scene_id=sid,revision_id=revision['id'],model=get_model(),system_contract_digest=load_contract(runtime=info())['digest']),calls=[],status='working',created_at=_now())
             store.atomic_write(directory/'job.json',job)
         index['jobs'].append(path); store.atomic_write(root/sg.BASE/'ledger.json',index)
     if job['input']['model']!=get_model(): raise WorkflowError('MODEL_MISMATCH','Restore the model of the unfinished revision')

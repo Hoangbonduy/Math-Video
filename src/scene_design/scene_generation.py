@@ -401,7 +401,10 @@ def run_scenes(project_dir, *, scene_id=None, retry_uncertain=None, trial_mode=F
                     raise WorkflowError('STRUCTURED_CLIP_REQUIRED','AI revision requires the existing clip source bundle')
                 fingerprint=dict(stage=stage,scene_id=target,version=version,script_version=script['version'],script_sha256=script['sha256'],
                     script_bundle=script['bundle'],base_version=base['version'] if base else None,base_sha256=base['sha256'] if base else None,feedback=feedback,
-                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=DESIGN_PIPELINE_VERSION,design_prompt_version=9 if DESIGN_PIPELINE_VERSION==3 else 8,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION in (2,3) else {}))
+                    config=config,design_sha256=design['sha256'] if design else None,model=get_model(),**(dict(design_pipeline=DESIGN_PIPELINE_VERSION,design_prompt_version=10 if DESIGN_PIPELINE_VERSION==3 else 8,max_repairs=repairs) if stage=='scene_design' and DESIGN_PIPELINE_VERSION in (2,3) else {}))
+                from src.shared.system_contract import load_contract, SCHEMA_VERSION
+                fingerprint['system_contract_digest']=load_contract(runtime=runtime_info())['digest']
+                fingerprint['contract_schema_version']=SCHEMA_VERSION
                 if 'global_visuals' in payload['script']:
                     from src.scene_design.script_visuals import VERSION
                     fingerprint['visual_handoff_version']=VERSION

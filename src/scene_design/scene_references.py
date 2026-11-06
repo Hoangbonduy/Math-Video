@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from src.scene_design import manim_runtime, scene_theme
 from src.shared._workflow_store import WorkflowError
+from src.shared.system_contract import ALLOWED_IMPORTS
 
 RECIPES = {
     'parameter_geometry': 'ValueTracker + always_redraw: derive curve points, secant/tangent and readout from the same function and tracker; animate only the tracker.',
@@ -75,9 +76,12 @@ print(json.dumps(result))
 
 
 def capabilities():
+    apis=_inspect(COMPONENTS)
+    missing=[name for name,entry in apis.items() if not entry['available']]
+    if missing:raise WorkflowError('SCENE_CAPABILITY_MISSING','Catalog helpers missing implementation: '+repr(missing))
     return dict(runtime=manim_runtime.info(), frame_contract=scene_theme.profile(),
-        recipes=RECIPES, components=COMPONENTS,component_apis=_inspect(COMPONENTS),
-        imports=['manim','numpy','math','manim_kit','src.scene_design.manim_kit'],
+        recipes=RECIPES, components=COMPONENTS,component_apis=apis,
+        imports=list(ALLOWED_IMPORTS),
         reference_rule='Installed API signatures are authoritative. Helpers belong to manim_kit. '
         'Use vn_text(content, size=28); font_size is a compatibility alias. '
         'Keep effective font size at least MIN_FONT_SIZE after scaling. '

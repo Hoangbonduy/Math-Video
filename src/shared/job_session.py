@@ -97,6 +97,15 @@ class Session:
                 self.retry_uncertain = None
                 entry["retry_authorized"] = True
                 self.save()
+        from src.shared.system_contract import bind_job, prompt
+        from src.scene_design.manim_runtime import info
+        effective=bind_job(self,runtime=info())
+        messages=[dict(message) for message in messages]
+        if messages and messages[0].get('role')=='system':
+            if effective['digest'] not in messages[0].get('content',''):
+                messages[0]['content'] += prompt(effective)
+        else:
+            messages.insert(0,dict(role='system',content=prompt(effective)))
         while True:
             if len(self.job["calls"]) >= self.max_requests or sum(c.get("http_status") in (429, 503) for c in previous) >= 2:
                 raise WorkflowError("REQUEST_LIMIT", "Request/retry limit reached")

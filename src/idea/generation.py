@@ -156,7 +156,7 @@ def _produce(session, topic, brief, previous=None, feedback=None):
                                  calls=job["calls"], budget_usd=None if job["pricing"].get("billing_source") in SUBSCRIPTION_SOURCES else BUDGET_USD, budget_used_usd=None if job["pricing"].get("billing_source") in SUBSCRIPTION_SOURCES else _used(job),
                                   billing_source=job["pricing"].get("billing_source","api"),
                                  feedback=feedback, base_version=job["base_version"], prompt_version=prompt_version,
-                                 guidelines_sha256=job["input"]["guidelines_sha256"]),
+                                 guidelines_sha256=job["input"]["guidelines_sha256"],system_contract=job.get('system_contract')),
     }
     for name, data in bundle.items():
         # Immutable bundle files can be recreated from durable model responses.
@@ -212,9 +212,14 @@ def run_ai(project_dir, *, retry_uncertain=None):
             if reference and saved_job['version'] == version and not switching_backend:
                 if 'prompt_version' in saved_job['input']:
                     fingerprint['prompt_version'] = saved_job['input']['prompt_version']
+                if 'system_contract_digest' in saved_job['input']:
+                    fingerprint['system_contract_digest']=saved_job['input']['system_contract_digest']
                 if 'guidelines_sha256' in saved_job['input']:
                     fingerprint['guidelines_sha256'] = saved_job['input']['guidelines_sha256']
             else:
+                from src.shared.system_contract import load_contract
+                from src.scene_design.manim_runtime import info
+                fingerprint['system_contract_digest']=load_contract(runtime=info())['digest']
                 fingerprint['prompt_version'] = PROMPT_VERSION
                 _, fingerprint['guidelines_sha256'] = load_guidelines()
             if subscription_billing():fingerprint['ai_backend']=get_backend()

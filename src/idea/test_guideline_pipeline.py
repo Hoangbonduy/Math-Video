@@ -334,7 +334,7 @@ class GuidelinePipeline(unittest.TestCase):
         self.assertLess(exported.index('## Khai báo toàn cục'), exported.index('## Lời đọc'))
         self.assertEqual(exported.count('#### 1. Kế thừa & thay đổi'), len(script['scenes']))
         self.assertTrue(store.read_json(directory / 'critique.json')['all_passed'])
-        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], 6)
+        self.assertEqual(store.read_json(directory / 'generation.json')['prompt_version'], __import__('src.idea.narration',fromlist=['PROMPT_VERSION']).PROMPT_VERSION)
         run_workflow(self.project, ai=True)
         self.assertEqual(len(self.router.requests), 4)
 

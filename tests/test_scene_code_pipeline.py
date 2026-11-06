@@ -49,6 +49,9 @@ class CodeRouter(FakeRouter):
             result=dict(summary='Sửa mã cảnh.',categories=['code'],scenes=[sid],resources=[],resource_updates=[],outside_scope=False)
         elif 'beats' in props:
             result=visual_plan()
+            if 'constraints' in props:
+                result['constraints']=dict(events=[],event_relations=[],overflow_windows=[],relations=[])
+                for obj in result['objects']:obj['layout_role']='hud' if obj['role']=='text' else 'focal'
         elif 'source' in props:
             result=dict(source=self.sources[min(self.code_count,len(self.sources)-1)],requires_design_change=False,reason='')
             self.code_count+=1

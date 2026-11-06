@@ -1,6 +1,7 @@
 """Inspect actual Cairo geometry at every encoded frame; no synthetic layout model."""
 import math
 from src.scene_design.scene_theme import profile
+from src.shared.system_contract import load_contract, layout_findings
 
 
 class LayoutTelemetry:
@@ -14,6 +15,10 @@ class LayoutTelemetry:
         self.previous = None
         self.early_motion = False
         self.active_motion = None
+        self.contract=getattr(scene,'system_contract',None) or load_contract()
+        self.initial_boxes={}
+        self.content_events=[]
+        self.last_content={}
         self.font_corrections = {}
         self.active_fonts = {}
 
@@ -21,6 +26,7 @@ class LayoutTelemetry:
         from manim import Text, MathTex, Tex
         registry = dict(getattr(self.scene, 'layout_registry', {}))
         covered = {id(part) for entry in registry.values()
+                   if entry['role'] in ('text','formula') and isinstance(entry['mobject'],(Text,MathTex,Tex))
                    for part in entry['mobject'].get_family()}
         # Unregistered text still participates in readability/collision checks.
         for mob in self.scene.get_mobject_family_members():
@@ -47,7 +53,10 @@ class LayoutTelemetry:
             if not all(math.isfinite(v) for v in box):
                 raise ValueError('Nonfinite render geometry: '+oid)
             result[oid] = dict(role=entry['role'], box=[round(v,5) for v in box],
-                               overlap_with=entry['overlap_with'])
+                               overlap_with=entry['overlap_with'],
+                               layout_role=entry.get('layout_role'),overflow_windows=entry.get('overflow_windows',[]),
+                               enforce_hud=entry.get('enforce_hud',False),
+                               has_text=any(isinstance(p,(Text,MathTex,Tex)) for p in mob.get_family()))
             if entry['role'] in ('text','formula'):
                 result[oid]['text'] = str(getattr(mob, 'text', getattr(mob, 'tex_string', '')))
                 if hasattr(mob, 'font_size'):
@@ -77,7 +86,7 @@ class LayoutTelemetry:
                 stat['last_box']=box;stat['last_frame']=self.frame+count-1
                 stat['box_min']=[min(a,b) for a,b in zip(stat['box_min'],box)]
                 stat['box_max']=[max(a,b) for a,b in zip(stat['box_max'],box)]
-        bounds = profile()['safe_bounds']
+        bounds = self.contract['frame']['safe_bounds']
         def issue(ids, problem, fix, category='layout'):
             key = (tuple(ids), problem)
             if key not in self.seen and len(self.issues)<50:
@@ -88,23 +97,23 @@ class LayoutTelemetry:
                     self.samples.append(row)
         if not objects and self.frame == 0:
             issue([], 'First encoded frame has no visible tracked content', 'Show a visual anchor at t=0', 'timing')
-        for oid, item in objects.items():
-            if item['role']=='background':
-                continue
-            a = item['box']
-            if a[0]<bounds[0]-.02 or a[1]>bounds[1]+.02 or a[2]<bounds[2]-.02 or a[3]>bounds[3]+.02:
-                issue([oid], 'Rendered object leaves the safe area', 'Adjust shift/scale/path; split the plan if minimum readable text cannot fit')
-            if item.get('font_size',100) < profile()['min_font_size']-.1:
-                issue([oid], 'Rendered font is below the readability minimum',
-                      f'Measured font_size={item["font_size"]}; minimum={profile()["min_font_size"]}. '
-                      'Use vn_text(content, size=28) and remove undersizing scale factors; wrap or split only if needed.')
+        for oid,item in objects.items():
+            for row_issue in layout_findings(oid,item,row['time'],contract=self.contract,initial_box=self.initial_boxes.get(oid)):
+                key=(tuple(row_issue['object_ids']),row_issue['problem'])
+                if key not in self.seen:
+                    self.seen.add(key);self.issues.append(row_issue)
+            self.initial_boxes.setdefault(oid,item['box'])
+            content=item.get('text')
+            if content is not None and self.last_content.get(oid)!=content:
+                self.content_events.append(dict(object_id=oid,time=row['time'],frame=self.frame,text=content,channel='onscreen'))
+                self.last_content[oid]=content
         def candidate(ids, problem):
             key=(tuple(ids),problem)
             if key not in self.candidate_seen and len(self.candidates)<40:
                 self.candidate_seen.add(key)
                 self.candidates.append(dict(time=row['time'],object_ids=ids,problem=problem,
                     bbox_only=True))
-        foreground=[(oid,item) for oid,item in objects.items() if item['role']!='background']
+        foreground=list(objects.items())
         for oid,item in foreground:
             a=item['box']
             if min(a[0]-bounds[0],bounds[1]-a[1],a[2]-bounds[2],bounds[3]-a[3])<.12:
@@ -203,7 +212,8 @@ class LayoutTelemetry:
     def report(self):
         return dict(checked_frames=self.frame, fps=self.fps, events=self.events,
                     object_ids=sorted(self.object_ids), issues=self.issues,candidates=self.candidates,
-                    early_motion=self.early_motion, samples=self.samples)
+                    early_motion=self.early_motion, samples=self.samples,
+                    content_events=self.content_events,system_contract_digest=self.contract['digest'])
 
 
 def select_frames(telemetry, frame_count, limit=5):

@@ -43,7 +43,7 @@ Kết cảnh: Vị trí, trạng thái và giá trị cụ thể của các đ�
 - Điều kiện riêng về ý nghĩa, thứ tự hoặc thời điểm tiết lộ thông tin.
 
 Giữ danh tính và kích thước đối tượng nhất quán; mọi reset/gọi lại trạng thái cũ phải
-được khai báo ở Thay đổi. Phân biệt thay đổi camera/bố cục với thay đổi vật liệu.
+được khai báo ở Thay đổi. Phân biệt biến đổi trình bày/bố cục với thay đổi vật liệu; tuân thủ system_contract về camera.
 Không tự dựng lại trạng thái ban đầu giữa các cảnh. Mô tả mốc và đích đến đủ rõ để
 bước thiết kế cảnh thực hiện; không dùng “trượt một nấc” mà thiếu khoảng dịch.
 """

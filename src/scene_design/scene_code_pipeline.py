@@ -18,6 +18,7 @@ from src.scene_design import scene_contract as contract, scene_references, scene
 from src.scene_design import scene_pipeline as legacy, scene_vision
 from src.scene_design.design import CODE_SCHEMA, validate_code
 from src.scene_design.scene_telemetry import select_frames
+from src.shared import system_contract
 
 VERSION = 3
 PLAN_SCHEMA = copy.deepcopy(contract.STORY_SCHEMA)
@@ -43,7 +44,17 @@ def _ask(session, phase, instruction, context, schema):
 
 
 def validate_plan(plan, context):
-    contract.structure(plan, PLAN_SCHEMA, 'visual_plan')
+    contract.structure(plan, system_contract.plan_schema(PLAN_SCHEMA,context), 'visual_plan')
+    preflight=system_contract.preflight(plan,context['target_seconds'])
+    if not preflight['passed']:
+        exc=WorkflowError('INVALID_SCENE_DESIGN',str(preflight['issues']))
+        exc.issues=preflight['issues']
+        raise exc
+    if context.get('contract_schema_version')==system_contract.SCHEMA_VERSION:
+        allowed={name.split('.')[-1] for name in plan['required_apis']}|set(plan['recipe_ids'])|set(system_contract.RELATION_CHECKERS)
+        requested={name.split('.')[-1] for beat in plan['beats'] for name in beat['required_capabilities']}
+        if requested-allowed:
+            raise WorkflowError('INVALID_SCENE_DESIGN','SC.API: undeclared capabilities '+repr(sorted(requested-allowed))+'; use required_apis, recipe_ids or registered relation kinds')
     core={key:copy.deepcopy(plan[key]) for key in contract.STORY_SCHEMA['properties']}
     for beat in core['beats']:
         beat['required_capabilities']=[]
@@ -65,16 +76,21 @@ def _plan(session, context, index, previous, issues):
         'State what viewers see, how it moves, what they understand and concrete acceptance criteria. '
         'For cutting/rearrangement, specify piece boundaries, exact translations/rotations, conserved area and the expected final outline. '
         'Explain how the remaining real pieces assemble; do not assume a small arbitrary shift reconstructs the original outline. '
-        'Show a concrete anchor at t=0 and start meaningful motion before 0.8 seconds. '
-        'Choose recipe_ids and at most 16 required_apis from actual Manim needs; a targeted reference lookup follows. '
+        'Show a concrete anchor at t=0 and start meaningful motion before system_contract.policy.opening_motion_seconds. '
+        'Choose recipe_ids and required_apis within system_contract.policy.max_api_names; a targeted reference lookup follows. '
+        'required_capabilities in each beat must be an API from required_apis, a chosen recipe ID, or a registered relation kind. '
+        'Do not invent semantic capability names or infer pipeline support from API documentation. '
         'Accepted names include VGroup, Axes.plot, manim.VGroup, manim_kit.vn_text and src.scene_design.manim_kit.vn_text. '
         'objects lists semantic object IDs/roles for track(), including individual text labels. '
+        'When constraints are requested, declare local events with channels and exact content, before/after/simultaneous relations, '
+        'object/time overflow windows, and applicable typed mathematical relations. Use empty arrays for inapplicable mechanisms. '
+        'layout_role separates hud, attached_label, focal and context. Only HUD stays fixed above geometry; point labels may follow points. '
         'Use the shared portrait frame and safe bounds. Formula/text must stay readable at both resolutions. '
         'For overflow despite minimum readable fonts, split the explanation into sequential visual states or reduce simultaneous content; '
         'keep narration/duration and all unaffected acceptance criteria. Do not solve density by shrinking indefinitely. '
         'Plan within the installed runtime; local reference may be newer. Do not restrict the plan to the old JSON renderer primitives. '
         'When repairing, preserve unaffected parts of the plan and every existing criterion unless meaning feedback explicitly requires a correction.',
-        dict(context,previous_visual_plan=previous,issues=issues),PLAN_SCHEMA)
+        dict(context,previous_visual_plan=previous,issues=issues),system_contract.plan_schema(PLAN_SCHEMA,context))
     result=validate_plan(result,context)
     if previous and issues and not any(i['category']=='meaning' for i in issues):
         old={c for beat in previous['beats'] for c in beat['criteria']}
@@ -107,7 +123,7 @@ def validate_helper_calls(source,references):
         unknown={k.arg for k in node.keywords if k.arg is not None}-set(info.get('keywords',[]))
         if unknown:
             raise WorkflowError('INVALID_SCENE_CODE',f'Line {node.lineno}: {name} has unsupported keyword(s) {sorted(unknown)}. '
-                f'Installed helper signature: {name}{info["signature"]}. Preserve readable size >= 22 after scaling.')
+                f'Installed helper signature: {name}{info["signature"]}. Preserve frame_contract.min_font_size after scaling.')
     return source
 
 
@@ -121,13 +137,14 @@ def _code(session, context, plan, references, index, previous, issues):
         'Use vn_text(content, size=28), formula_lines, fit_to_safe_area and MIN_FONT_SIZE; wrap formulas at semantic boundaries. '
         'Helper signatures in component_apis are authoritative. Effective font size after every scale must stay >= MIN_FONT_SIZE. '
         'repair_history contains earlier failures: preserve fixes already made and do not reintroduce them while fixing the latest issue. '
-        'Text and geometry use the same 9 x 16 frame at 360x640 preview and 1080x1920 final, both 30 FPS. '
+        'Text and geometry use the same logical frame and timing from frame_contract at both delivery resolutions. '
         'Never multiply coordinates, font sizes, stroke widths or timing by pixel resolution. Never change global config or camera dimensions. '
         'Set self.camera.background_color from the supplied style. Embed style/duration as Python literals. '
-        'Keep all visible content within frame_contract.safe_bounds, reserving the bottom region for captions. '
+        'Follow SC.LAYOUT from system_contract: overflow permissions are per context object and time window. '
+        'Keep text and focal objects safe and readable throughout; never use background to bypass checks. '
         'Use actual Manim animations, geometry, Axes, ValueTracker and updaters; dependent mathematical values use a single shared source. '
         'For cutting/rearranging objects, derive pieces from the original geometry and conserve area; never create a duplicate piece to fake extraction. '
-        'Start with visible anchor objects at t=0, meaningful motion by 0.8s, no blank opening. '
+        'Start with visible anchor objects at t=0, meaningful motion by system_contract.policy.opening_motion_seconds, no blank opening. '
         'Budget each self.play explicitly; call finish_scene(self, target_seconds). Never wait with nonpositive duration. '
         'Preserve narration exactly; no sound or narration walls. Use DejaVu Sans Text for Vietnamese; '
         'MathTex is allowed ONLY if system_capabilities.runtime.latex_available is true. '
@@ -149,7 +166,8 @@ def _code(session, context, plan, references, index, previous, issues):
 def _manifest(plan):
     return dict(schema_version=VERSION,scene_id=plan['scene_id'],narration=plan['narration'],
         purpose=plan['goal'],duration=plan['duration'],visual_strategy=plan['visual_strategy'],
-        objects=plan['objects'],groups=[],graphs=[],render_profile=scene_theme.profile())
+        objects=plan['objects'],groups=[],graphs=[],render_profile=scene_theme.profile(),
+        **(dict(constraints=plan['constraints']) if 'constraints' in plan else {}))
 
 
 def render_code(root, work, session, design, source, config):
@@ -177,24 +195,26 @@ def render_code(root, work, session, design, source, config):
         record=dict(status='running',version=version,code_path=code_path,source_sha256=checksum)
         store.atomic_write(path,record)
         settings=dict(scene_theme.render_profile(config['render']),
-                      target_duration=design['duration'],collect_layout=True)
+                      target_duration=design['duration'],collect_layout=True,
+                      system_contract=store.read_json(work.parent/'system_contract.json'),contract_plan=design)
         output=sg.RENDERER(root,design['scene_id'],version,code_path,'GeneratedScene',settings)
         if output['status']!='success':
             raise WorkflowError('RENDER_FAILED',output.get('error') or 'Manim failed')
         report=store.read_json(Path(output['log_path']).with_suffix('.json'))
     video=report['video']
-    if abs(video['duration_seconds']-design['duration'])>2/scene_theme.FPS+1e-6:
+    if abs(video['duration_seconds']-design['duration'])>system_contract.POLICY['duration_tolerance_frames']/scene_theme.FPS+1e-6:
         raise WorkflowError('SCENE_DURATION_MISMATCH','Manim duration differs from approved narration timing')
     # The worker already validates FPS with encoding tolerance. Do not reject
     # a valid movie here because its measured average is slightly above 30.
-    if (video['width'],video['height'])!=(360,640):
-        raise WorkflowError('RENDER_FAILED','Preview must be 360 x 640')
+    if (video['width'],video['height'])!=scene_theme.PREVIEW_RESOLUTION:
+        raise WorkflowError('RENDER_FAILED','Preview must match scene_theme.PREVIEW_RESOLUTION')
     ref=sg.render_reference(root,design['scene_id'],Path(output['video_path']),
         dict(clip_version=record['version'],code_path=record['code_path']))
     ref['video'].pop('layout_telemetry',None)
     ref.update(preview_engine='direct_code',frame_contract=scene_theme.profile(),
         component_sha256=store.digest(Path(__file__).with_name('manim_kit.py')),
-        theme_sha256=store.digest(Path(scene_theme.__file__)))
+        theme_sha256=store.digest(Path(scene_theme.__file__)),
+        system_contract=store.read_json(work.parent/'system_contract.json'))
     store.atomic_write(path,dict(record,status='success',reference=ref))
     return ref
 
@@ -203,7 +223,7 @@ def evidence(root, work, ref, design, plan):
     metadata=store.read_json(root/ref['metadata_path'])
     video=metadata['video'];telemetry=video.get('layout_telemetry')
     if not telemetry or not telemetry['checked_frames']:
-        raise WorkflowError('RENDER_FAILED','Actual render layout telemetry is missing')
+        raise WorkflowError('SCENE_EVIDENCE_MISSING','SC.EVIDENCE: actual render telemetry missing; orchestrator must collect evidence, not rewrite code')
     issues=copy.deepcopy(telemetry['issues'])
     missing={o['id'] for o in design['objects']}-set(telemetry['object_ids'])
     if missing:
@@ -222,7 +242,7 @@ def evidence(root, work, ref, design, plan):
                 motion_events=telemetry.get('events',[]))
     store.atomic_write(work/'motion_checks.json',checks)
     render_checks=dict(passed=True,issues=[],video=ref['video'],layout_checks=checks,
-        target_duration_seconds=design['duration'],duration_tolerance_seconds=2/scene_theme.FPS)
+        target_duration_seconds=design['duration'],duration_tolerance_seconds=system_contract.POLICY['duration_tolerance_frames']/scene_theme.FPS)
     store.atomic_write(work/'render_checks.json',render_checks)
     folder=work/'frames';folder.mkdir(exist_ok=True)
     frames=[]
@@ -261,8 +281,9 @@ def _publish(root,directory,session,work,design,plan,assets,ref,review):
     for name,data in [('assets.json',assets),('storyboard.json',plan),('manim_render.json',ref)]:
         legacy._write(directory/name,data)
     files=[p for p in work.rglob('*') if p.is_file() and p.suffix in ('.json','.png','.jpg','.py')]
-    files += [directory/'design.json',directory/'storyboard.json',root/ref['path'],root/ref['code_path']]
+    files += [directory/'design.json',directory/'storyboard.json',root/ref['path'],root/ref['code_path'],directory/'system_contract.json']
     quality=dict(passed=review['passed'],pipeline_version=VERSION,
+        system_contract=session.job.get('system_contract'),
         design_sha256=store.digest(directory/'design.json'),video_sha256=ref['sha256'],
         storyboard_sha256=store.digest(directory/'storyboard.json'),
         review_model=session.job['vision_pricing']['model'],summary=review['summary'],
@@ -294,6 +315,8 @@ def generate(root,directory,session,context):
         return directory/'design.json',dict(review_path=str(directory/'design.md'),render_engine='manim',
             manim_render=ref,design_pipeline=VERSION,quality_passed=quality['passed'],
             quality_path=str(final.relative_to(root)),storyboard_path=str((directory/'storyboard.json').relative_to(root)))
+    effective=system_contract.bind_job(session,runtime=scene_references.manim_runtime.info())
+    context=dict(context,system_contract=effective,contract_schema_version=job.get('input',{}).get('contract_schema_version'))
     cap_path=directory/'system_capabilities.json'
     if cap_path.exists():
         capabilities=store.read_json(cap_path)
@@ -326,7 +349,7 @@ def generate(root,directory,session,context):
                     plan,assets,result['reference'],result['review'])
             continue
         try:
-            needs_plan=plan is None or any(i['category'] in ('meaning','unsupported') or 'LAYOUT_REPLAN_REQUIRED' in i['problem'] for i in issues)
+            needs_plan=plan is None or any(system_contract.route_issue(i)=='planner' or i['category'] in ('meaning','unsupported') or 'LAYOUT_REPLAN_REQUIRED' in i['problem'] for i in issues)
             if needs_plan:
                 _progress(session,'planning_visuals',index)
                 plan=_plan(session,context,index,plan,issues)
@@ -357,6 +380,9 @@ def generate(root,directory,session,context):
             review=legacy._review(root,session,vision,plan,design,manifest,render_checks,index,phase_prefix='v3',visual_handoff=context.get('visual_handoff'))
             legacy._write(work/'visual_review.json',review)
             issues=review['issues']
+            if any(system_contract.route_issue(i)=='orchestrator' for i in issues):
+                legacy._write(result_path,dict(passed=False,issues=issues,status='insufficient_evidence'))
+                raise WorkflowError('SCENE_EVIDENCE_MISSING','SC.EVIDENCE: review needs additional evidence; saved review retained, code repair not requested')
             job['draft']['review']=dict(passed=review['passed'],summary=review['summary'],
                 criteria_passed=sum(c['passed'] for c in review['criteria_results']),criteria_total=len(review['criteria_results']))
             session.save()
@@ -367,6 +393,12 @@ def generate(root,directory,session,context):
         except WorkflowError as exc:
             if exc.code not in ('INVALID_SCENE_DESIGN','INVALID_SCENE_REFERENCE','INVALID_SCENE_CODE','RENDER_FAILED','SCENE_DURATION_MISMATCH','INVALID_MODEL_OUTPUT','INVALID_VISUAL_REVIEW','LAYOUT_REPLAN_REQUIRED','MEANING_REPLAN_REQUIRED'):
                 raise
+            if getattr(exc,'issues',None):
+                issues=exc.issues
+                legacy._write(result_path,dict(passed=False,issues=issues))
+                if any(system_contract.route_issue(i)=='system' for i in issues):
+                    raise WorkflowError('SCENE_CAPABILITY_MISSING',str(issues))
+                continue
             reference_failure=exc.code=='INVALID_SCENE_REFERENCE' or job.get('progress')=='reading_references'
             planning_failure=job.get('progress')=='planning_visuals'
             category='unsupported' if reference_failure else 'meaning' if planning_failure or plan is None or exc.code=='MEANING_REPLAN_REQUIRED' else 'layout' if exc.code=='LAYOUT_REPLAN_REQUIRED' else 'relation'
@@ -397,7 +429,8 @@ def render_final(root, artifact, config=None):
     version=sg._clip_version(root,design['scene_id'])
     output=sg.RENDERER(root,design['scene_id'],version,ref['code_path'],'GeneratedScene',
         dict(scene_theme.render_profile((config or sg._config(root))['render'],final=True),
-             target_duration=design['duration'],collect_layout=True))
+             target_duration=design['duration'],collect_layout=True,
+             **(dict(system_contract=ref['system_contract'],contract_plan=design) if ref.get('system_contract') else {})))
     if output['status']!='success':
         return output
     metadata_path=Path(output['log_path']).with_suffix('.json')

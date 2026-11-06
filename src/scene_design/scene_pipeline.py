@@ -53,7 +53,7 @@ def _ask(session,phase,instruction,context,schema):
 
 def _story(session,context,index,previous,issues):
     instruction=('Create an explanatory storyboard for the supplied scene within the approved script. Preserve scene_id, narration and duration=target_seconds EXACTLY. '
-      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within [0.0s, 0.8s] '
+      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within the system_contract opening-motion interval '
       'that directly embodies the opening narration (for example: folding a sheet, changing thickness, or sweeping a parameter on a curve). Never leave the opening second static. '
       'Divide the original narration into 1..8 consecutive verbatim excerpts covering it exactly. Beats must cover [0,target_seconds] with no gaps or overlaps. '
       'For each beat state what the viewer must SEE, how it MOVES, what they should UNDERSTAND and 1..6 specific visually testable criteria. '
@@ -100,7 +100,7 @@ def _relationship_rules():
 def _design(session,context,story,assets,index,previous,issues):
     instruction=('FIRST FRAME VISIBILITY: Display the main title or primary visual object immediately at t=0 '
       '(do NOT attach an appear action with start > 0 to every object). Only animate appear for secondary elements introduced in subsequent beats. '
-      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within [0.0s, 0.8s] '
+      'EARLY OPENING MOTION: beat_01 MUST initiate a meaningful visual transformation or motion within the system_contract opening-motion interval '
       'that directly embodies the opening narration (for example: folding a sheet, changing thickness, or sweeping a parameter on a curve). Never leave the opening second static. '
       'Design this storyboard as a VERSION 2 relational scene using the exact supplied schema and renderer capabilities. '
       'Preserve scene_id, narration, duration=target_seconds and aspect_ratio=config.render.resolution[0]/resolution[1]. schema_version=2. '
@@ -216,7 +216,9 @@ def _review(root,session,vision,story,design,manifest,checks,index,phase_prefix=
     issue=schema['properties']['issues']['items']['properties']
     issue['object_ids']['items']=dict(type='string',enum=[o['id'] for o in design['objects']]+[g['id'] for g in design['groups']])
     issue['beat_id']=dict(type='string',enum=[b['id'] for b in story['beats']])
-    response=session.call(f'{phase_prefix}_visual_review_{index}',scene_vision.messages(root,story,design,manifest,checks,visual_handoff=visual_handoff),schema=schema,client=vision,pricing=session.job['vision_pricing'])
+    snapshot_path=session.directory/'system_contract.json'
+    effective=store.read_json(snapshot_path) if snapshot_path.exists() else None
+    response=session.call(f'{phase_prefix}_visual_review_{index}',scene_vision.messages(root,story,design,manifest,checks,visual_handoff=visual_handoff,system_contract=effective),schema=schema,client=vision,pricing=session.job['vision_pricing'])
     review=parse_object(scene_vision.text(response,session.job['vision_pricing']['model']))
     contract.structure(review,contract.REVIEW_SCHEMA,'visual_review')
     expected=[(b['id'],criterion) for b in story['beats'] for criterion in b['criteria']]
@@ -414,6 +416,8 @@ def generate(root,directory,session,context):
             review=_review(root,session,vision,story,design,manifest,render_checks,index,visual_handoff=context.get('visual_handoff'));_write(work/'visual_review.json',review)
             result=dict(passed=review['passed'],issues=review['issues'],reference=ref,summary=review['summary'])
             _write(saved,result);issues=result['issues']
+            if any(i['category']=='evidence' for i in issues):
+                raise WorkflowError('SCENE_EVIDENCE_MISSING','SC.EVIDENCE: collect missing evidence; do not rewrite scene code')
             session.job['draft']['review']=dict(passed=review['passed'],summary=review['summary'],criteria_passed=sum(c['passed'] for c in review['criteria_results']),criteria_total=len(review['criteria_results']))
             session.save()
             if result['passed']:break

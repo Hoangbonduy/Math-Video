@@ -10,7 +10,7 @@ from src.idea.guidelines import (extract_goal_info, load_guidelines,
                                   guidelines_for_phase, user_idea_source)
 from src.shared._workflow_store import WorkflowError
 
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 NARRATION_SCHEMA = _object(dict(title=_TEXT, main_idea=_TEXT,
                                claims=SCRIPT_SCHEMA['properties']['claims'], narration=_TEXT))
 CRITIQUE_RULES = tuple([f'rule_{index}' for index in range(1, 9)] +
@@ -84,6 +84,10 @@ def editing_messages(topic, brief, sources, draft, *, previous=None, feedback=No
         'không hiển thị đáp án. Chỉ khi có dòng 6, hình vẫn chuyển động khi đọc toàn bộ câu chốt. Trả kịch bản theo schema được cung cấp, có global_visuals, không trả narration_draft.')
     context = json.loads(messages[1]['content'])
     messages[0]['content'] += '\n' + VISUAL_INSTRUCTIONS
+    from src.shared.system_contract import load_contract, prompt
+    from src.scene_design.manim_runtime import info
+    context['system_contract']=load_contract(runtime=info())
+    messages[0]['content'] += prompt(context['system_contract'])
     context['narration_draft'] = draft
     messages[1]['content'] = json.dumps(context, ensure_ascii=False)
     return messages

@@ -40,7 +40,7 @@ BINDING=_object(dict(id=S,kind=enum('point_on_graph','line_through_points','labe
 BEAT=_object(dict(object_id=S,action=enum('appear','move','fade','highlight','rotate','scale'),start=N,duration=N,dx=N,dy=N,value=N,easing=enum('linear','smooth')))
 DESIGN_SCHEMA=_object(dict(schema_version=dict(type='integer',enum=[2]),scene_id=S,narration=S,purpose=S,duration=N,aspect_ratio=N,template=enum(*TEMPLATES),
     objects=array(OBJECT,1,60),groups=array(GROUP,0,20),parameters=array(PARAMETER,0,12),parameter_tracks=array(PARAM_TRACK,0,32),graphs=array(GRAPH,0,8),bindings=array(BINDING,0,50),timeline=array(BEAT,0,80),fallback_note=S))
-ISSUE=_object(dict(category=enum('meaning','relation','layout','timing','unsupported'),beat_id=S,object_ids=array(S,0,20),time=N,problem=S,fix=S))
+ISSUE=_object(dict(category=enum('meaning','relation','layout','timing','unsupported','evidence'),beat_id=S,object_ids=array(S,0,20),time=N,problem=S,fix=S))
 REVIEW_SCHEMA=_object(dict(passed={'type':'boolean'},summary=S,issues=array(ISSUE,0,20),criteria_results=array(_object(dict(beat_id=S,criterion=S,passed={'type':'boolean'},evidence=S)),1,48)))
 
 
@@ -48,6 +48,14 @@ def fail(message,code='INVALID_SCENE_DESIGN'):raise WorkflowError(code,message)
 
 
 def structure(value,schema,path='design'):
+    if 'anyOf' in schema:
+        for option in schema['anyOf']:
+            try:
+                structure(value,option,path)
+                return
+            except WorkflowError:
+                pass
+        fail(path+': no supported relation schema matched')
     kind=schema['type']
     if kind=='object':
         if not isinstance(value,dict):fail(path+': expected object')

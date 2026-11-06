@@ -61,7 +61,7 @@ def _write_json_atomic(path, value):
 def _settings(render_config):
     if not isinstance(render_config, Mapping):
         raise ValueError("render_config must be a mapping")
-    unknown = set(render_config) - {"quality", "resolution", "fps", "timeout_seconds", "target_duration", "collect_layout", "frame_height"}
+    unknown = set(render_config) - {"quality", "resolution", "fps", "timeout_seconds", "target_duration", "collect_layout", "frame_height", "system_contract", "contract_plan"}
     if unknown:
         raise ValueError(f"Unknown render_config keys: {list(map(str, unknown))}")
     quality = render_config.get("quality", "l")
@@ -101,6 +101,11 @@ def _settings(render_config):
         effective["frame_height"] = frame_height
     if render_config.get("collect_layout"):
         effective["collect_layout"] = True
+    for key in ('system_contract','contract_plan'):
+        if key in render_config:effective[key]=render_config[key]
+    if 'system_contract' in effective:
+        from src.shared.system_contract import validate_contract
+        validate_contract(effective['system_contract'])
     return settings, effective
 
 
@@ -156,13 +161,16 @@ def _run_worker(request_path, project, log, timeout):
         _stop_process_group(process)
 
 
-def _render_to_temp(work, project, source, scene_name, stem, settings, timeout, log, target_duration=None, collect_layout=False):
+def _render_to_temp(work, project, source, scene_name, stem, settings, timeout, log, target_duration=None, collect_layout=False, system_contract=None, contract_plan=None):
     rendered = work / "videos" / f"{stem}.mp4"
     report_path = work / "worker_result.json"
     settings = dict(settings, media_dir=str(work / "media"),
                     video_dir=str(rendered.parent), output_file=stem)
     request = dict(scene_file=str(source), scene_name=scene_name, settings=settings,
                    expected_video=str(rendered), report_path=str(report_path))
+    if system_contract is not None:
+        request['system_contract']=system_contract
+        request['contract_plan']=contract_plan
     if collect_layout:
         request["collect_layout"] = True
     if target_duration is not None:
@@ -250,6 +258,7 @@ def render_scene(project_dir, scene_id, version, scene_file, scene_name, render_
                 Path(work_dir), project, source, scene_name, stem, settings,
                 effective["timeout_seconds"], log, effective.get("target_duration"),
                 **(dict(collect_layout=True) if effective.get("collect_layout") else {}),
+                **{k:effective[k] for k in ('system_contract','contract_plan') if k in effective},
             )
             # Both files are on the project filesystem: publish atomically and
             # exclusively, so no incomplete clip is exposed or old clip replaced.

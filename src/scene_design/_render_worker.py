@@ -101,6 +101,10 @@ def render(request):
         # still determine output resolution, FPS and output location.
         with tempconfig(request["settings"]):
             scene=scene_class()
+            if request.get('system_contract'):
+                from src.shared.system_contract import validate_contract
+                scene.system_contract=validate_contract(request['system_contract'])
+                scene.contract_plan=request.get('contract_plan') or {}
             scene.camera.display_image_mobject=compatible_camera().display_image_mobject.__get__(scene.camera)
             telemetry = None
             if request.get('collect_layout'):

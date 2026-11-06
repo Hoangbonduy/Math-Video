@@ -227,15 +227,19 @@ def validate_code(source, assets):
     """Reject non-scene operations. This is a code policy, not an OS sandbox."""
     try: tree=ast.parse(source)
     except SyntaxError as exc: raise WorkflowError('INVALID_SCENE_CODE',str(exc)) from None
-    forbidden={'open','eval','exec','compile','getattr','setattr','delattr','globals','locals','vars','input','breakpoint','__import__','config'}
+    from src.shared.system_contract import FORBIDDEN_NAMES, FORBIDDEN_ATTRIBUTES, ALLOWED_IMPORTS, validate_camera
+    validate_camera(tree)
+    forbidden=FORBIDDEN_NAMES
     for node in ast.walk(tree):
         if isinstance(node,(ast.Import,ast.ImportFrom)):
             modules=[a.name for a in node.names] if isinstance(node,ast.Import) else [node.module or '']
-            allowed_modules = ('manim','math','numpy','manim_kit','src.scene_design.manim_kit')
+            allowed_modules = ALLOWED_IMPORTS
+            if isinstance(node,ast.ImportFrom) and any(a.name in FORBIDDEN_NAMES for a in node.names):
+                raise WorkflowError('INVALID_SCENE_CODE',f'SC.API line {node.lineno}: forbidden imported operation')
             if any(m not in allowed_modules for m in modules) or getattr(node,'level',0):
                 raise WorkflowError('INVALID_SCENE_CODE','Only manim, manim_kit, math and numpy imports are supported')
         if isinstance(node,ast.Name) and (node.id in forbidden or node.id.startswith('__')): raise WorkflowError('INVALID_SCENE_CODE','Forbidden operation')
-        if isinstance(node,ast.Attribute) and (node.attr.startswith('_') or node.attr in ('read_text','write_text','open','system','popen','load','save','fromfile','tofile','ctypeslib','memmap','add_sound','loadtxt','savetxt','genfromtxt','savez','savez_compressed')): raise WorkflowError('INVALID_SCENE_CODE','Forbidden attribute')
+        if isinstance(node,ast.Attribute) and (node.attr.startswith('_') or node.attr in FORBIDDEN_ATTRIBUTES or node.attr=='config'): raise WorkflowError('INVALID_SCENE_CODE','Forbidden attribute')
         if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='ImageMobject':
             allowed={a['path'] for a in assets}
             if not node.args or not isinstance(node.args[0],ast.Constant) or node.args[0].value not in allowed:

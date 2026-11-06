@@ -155,7 +155,7 @@ def formula_lines(*lines, size=28, color=FOREGROUND, buff=0.28):
     return fit_to_safe_area(group, min_scale=MIN_FONT_SIZE/size)
 
 
-def track(scene, object_id, mobject, role='shape', overlap_with=()):
+def track(scene, object_id, mobject, role='shape', overlap_with=(), *, layout_role=None, overflow_windows=()):
     """Name semantic render objects for actual frame geometry inspection.
 
     Track labels separately from panels/axes. Declare only intentional overlap.
@@ -164,8 +164,20 @@ def track(scene, object_id, mobject, role='shape', overlap_with=()):
         scene.layout_registry = {}
     if object_id in scene.layout_registry:
         raise ValueError('Duplicate tracked object: '+object_id)
-    if role not in ('text', 'formula', 'shape', 'background'):
+    from src.shared.system_contract import TRACK_ROLES, LAYOUT_ROLES
+    if role not in TRACK_ROLES:
         raise ValueError('Unknown tracked object role')
+    plan=getattr(scene,'contract_plan',{})
+    declared=next((o for o in plan.get('objects',[]) if o['id']==object_id),{})
+    if plan.get('objects') and not declared and overflow_windows:
+        raise ValueError('SC.LAYOUT: unplanned object cannot claim overflow: '+object_id)
+    if declared:
+        if layout_role is not None and declared.get('layout_role') and layout_role!=declared['layout_role']:
+            raise ValueError('SC.LAYOUT: layout role differs from plan: '+object_id)
+        if role!=declared['role']:raise ValueError('SC.LAYOUT: tracked role differs from plan: '+object_id)
+        layout_role=declared.get('layout_role',layout_role)
+        overflow_windows=[w for w in plan.get('constraints',{}).get('overflow_windows',[]) if w['object_id']==object_id]
+    if layout_role is not None and layout_role not in LAYOUT_ROLES:raise ValueError('Unknown layout role')
     scene.layout_registry[object_id] = dict(mobject=mobject, role=role,
-                                         overlap_with=list(overlap_with))
+        overlap_with=list(overlap_with),layout_role=layout_role,overflow_windows=list(overflow_windows),enforce_hud=bool(layout_role))
     return mobject

@@ -50,6 +50,11 @@ Viết lời đọc tiếng Việt và mô tả hình ảnh cho một YouTube Sh
     - **Nếu có dòng 5:** Trong `visual_intent` cảnh cuối, ghi rõ câu hỏi hiện thành chữ trên màn hình và không hiển thị đáp án.
     - **Nếu có dòng 6:** Trong `visual_intent` cảnh cuối, ghi rõ hình ảnh Manim tiếp tục chuyển động trong lúc đọc câu chốt.
     - Nếu không có dòng 5 hoặc dòng 6, không tự thêm phần tương ứng vào cảnh cuối.
+    - **Ràng buộc khả năng hệ thống trong `visual_intent` (Bắt buộc tuân thủ):**
+        - **Cấm điều khiển ống kính camera:** Tuyệt đối không dùng các diễn đạt yêu cầu di chuyển/thu phóng `camera` hay `khung camera`. Khi cần phóng cận (zoom) vào một chi tiết, phải mô tả là **phóng đại và tịnh tiến cụm đối tượng** để đưa vùng cần xem vào giữa màn hình.
+        - **Đánh dấu vai trò vùng an toàn (Safe Area):** Khi phóng đại khiến một phần vật thể lớn (như thân thanh socola, trục đồ thị dài) tràn ra ngoài khung hình dọc, phải ghi rõ trong `Thay đổi` và `Tiêu chí đạt`: chỉ kiểm tra nằm trọn trong khung hình đối với **vật thể tâm điểm** (ví dụ: dải chênh, vạch cắt, nhãn chữ), cho phép phần thân vật thể nền tràn khung.
+        - **Phân vùng cố định và tách nhịp chuyển động:** Các nhãn chữ, câu hỏi (dòng 5) và bộ đếm (`counter`) phải ghim ở vùng cố định phía trên màn hình, không dịch chuyển cắt ngang qua vùng không gian biến đổi hình học ở giữa. Trong `Timeline hình ảnh`, phải tách mốc thời gian làm mờ vật thể cũ (`ghost`) trước hoặc sau khi di chuyển mảnh ghép/bộ đếm, không cho đè lên nhau cùng lúc.
+        - **Tiêu chí kế thừa tự thân:** Ở mục `Kế thừa`, phải ghi đầy đủ tọa độ và trạng thái đầu cảnh để cảnh hiện tại có thể tự dựng và tự chấm điểm độc lập mà không bắt buộc phải có ảnh render thực tế của cảnh trước.
 
 ---
 
